@@ -248,6 +248,7 @@
 								request={req}
 								selected={selectedId === req.id}
 								isNew={freshIds.has(req.id)}
+								compact={selectedId !== null}
 								{now}
 								onselect={selectRequest}
 							/>
@@ -405,6 +406,13 @@
 	}
 	.ta-right {
 		text-align: right;
+	}
+	/* Match RequestRow's condensed layout when the detail panel is open. */
+	.board.has-detail .list-cols {
+		grid-template-columns: 68px minmax(0, 1fr) 64px 132px;
+	}
+	.board.has-detail .list-cols .hide-sm {
+		display: none;
 	}
 	.rows {
 		max-height: calc(100vh - 280px);
