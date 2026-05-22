@@ -1,6 +1,344 @@
-<!-- Placeholder homepage. Owned by the frontend engineer — replace with the
-     real landing per SPEC §9.1 and bar items #1, #2, #9. -->
-<main>
-	<h1>TinyWebhook</h1>
-	<p>Scaffold placeholder — homepage coming.</p>
-</main>
+<script lang="ts">
+	import { goto } from '$app/navigation';
+	import type { CreateInboxResponse, ApiError } from '$lib/types';
+	import CopyButton from '$lib/components/CopyButton.svelte';
+
+	let creating = $state(false);
+	let errorMsg = $state<string | null>(null);
+
+	const sampleCurl = `curl -X POST https://tinywebhook.site/in/abc123 \\
+  -H 'Content-Type: application/json' \\
+  -d '{"event":"checkout.completed","amount":4200}'`;
+
+	async function createInbox() {
+		if (creating) return;
+		creating = true;
+		errorMsg = null;
+		try {
+			const res = await fetch('/api/inboxes', { method: 'POST' });
+			if (!res.ok) {
+				let detail = `Request failed (${res.status})`;
+				try {
+					const body = (await res.json()) as ApiError;
+					if (body?.error) detail = body.error;
+				} catch {
+					/* keep default */
+				}
+				throw new Error(detail);
+			}
+			const data = (await res.json()) as CreateInboxResponse;
+			await goto(`/inbox/${data.inboxId}`);
+		} catch (e) {
+			errorMsg = e instanceof Error ? e.message : 'Could not create an inbox. Try again.';
+			creating = false;
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>TinyWebhook — Test webhooks in seconds</title>
+</svelte:head>
+
+<div class="page">
+	<header class="topbar wrap">
+		<a class="brand" href="/">
+			<span class="logo" aria-hidden="true">⌁</span>
+			<span>tinywebhook<span class="tld">.site</span></span>
+		</a>
+		<span class="chip">no signup · 24h inboxes</span>
+	</header>
+
+	<main class="hero wrap">
+		<div class="hero-copy">
+			<p class="eyebrow reveal" style="--d: 0ms">Webhook inbox for developers</p>
+			<h1 class="reveal" style="--d: 60ms">
+				Test webhooks<br /><span class="accent">in seconds.</span>
+			</h1>
+			<p class="sub reveal" style="--d: 140ms">
+				Create a temporary endpoint, receive HTTP requests, and inspect payloads instantly —
+				headers, query, body, source IP. No server, no tunnel, no deploy.
+			</p>
+
+			<div class="cta reveal" style="--d: 220ms">
+				<button class="btn btn-primary big" onclick={createInbox} disabled={creating} type="button">
+					{#if creating}
+						<span class="spinner" aria-hidden="true"></span> Creating…
+					{:else}
+						Create Inbox
+						<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+							<path
+								d="M5 12h14M13 6l6 6-6 6"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							/>
+						</svg>
+					{/if}
+				</button>
+				<span class="cta-note">Free · expires in 24h · live updates</span>
+			</div>
+
+			{#if errorMsg}
+				<p class="error" role="alert">{errorMsg}</p>
+			{/if}
+
+			<ul class="features reveal" style="--d: 300ms">
+				<li><span class="tick">▸</span> Real-time delivery over SSE</li>
+				<li><span class="tick">▸</span> Pretty JSON + raw body view</li>
+				<li><span class="tick">▸</span> One-click curl replay</li>
+			</ul>
+		</div>
+
+		<aside class="hero-demo reveal" style="--d: 360ms">
+			<div class="terminal">
+				<div class="term-bar">
+					<span class="d-dot"></span><span class="d-dot"></span><span class="d-dot"></span>
+					<span class="term-title">send a test webhook</span>
+				</div>
+				<pre class="term-body"><span class="prompt">$</span> {sampleCurl}</pre>
+				<div class="term-foot">
+					<CopyButton text={sampleCurl} label="Copy example" />
+				</div>
+			</div>
+
+			<div class="privacy">
+				<span class="warn-ico" aria-hidden="true">⚠</span>
+				<p>
+					Do not send passwords, API keys, production secrets, or personal data. Temporary inboxes
+					are for testing only.
+				</p>
+			</div>
+		</aside>
+	</main>
+
+	<footer class="foot wrap">
+		<span>A tiny tool for inspecting HTTP callbacks.</span>
+		<span class="dim">{new Date().getFullYear()} · tinywebhook.site</span>
+	</footer>
+</div>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		min-height: 100vh;
+	}
+
+	.topbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding-top: 22px;
+		padding-bottom: 22px;
+	}
+	.brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		color: var(--text);
+		font-weight: 700;
+		font-size: 15px;
+		letter-spacing: -0.01em;
+	}
+	.brand:hover {
+		text-decoration: none;
+	}
+	.logo {
+		display: grid;
+		place-items: center;
+		width: 30px;
+		height: 30px;
+		border-radius: 8px;
+		background: var(--accent);
+		color: #0a0b0d;
+		font-size: 18px;
+		box-shadow: 0 0 24px -6px var(--accent-glow);
+	}
+	.tld {
+		color: var(--text-faint);
+	}
+
+	.hero {
+		flex: 1;
+		display: grid;
+		grid-template-columns: 1.05fr 0.95fr;
+		gap: 56px;
+		align-items: center;
+		padding-top: 40px;
+		padding-bottom: 64px;
+	}
+	.hero-copy h1 {
+		font-size: clamp(44px, 6.4vw, 82px);
+		margin: 16px 0 0;
+	}
+	.accent {
+		color: var(--accent);
+		text-shadow: 0 0 38px var(--accent-glow);
+	}
+	.sub {
+		margin: 22px 0 0;
+		max-width: 30em;
+		color: var(--text-dim);
+		font-size: 15px;
+		line-height: 1.7;
+	}
+
+	.cta {
+		display: flex;
+		align-items: center;
+		gap: 18px;
+		margin-top: 34px;
+		flex-wrap: wrap;
+	}
+	.big {
+		font-size: 15px;
+		padding: 15px 26px;
+		border-radius: 8px;
+	}
+	.cta-note {
+		font-size: 12.5px;
+		color: var(--text-faint);
+	}
+	.error {
+		margin: 16px 0 0;
+		color: var(--s-5xx);
+		font-size: 13px;
+	}
+
+	.features {
+		list-style: none;
+		margin: 36px 0 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 9px;
+		color: var(--text-dim);
+		font-size: 13.5px;
+	}
+	.features .tick {
+		color: var(--accent);
+		margin-right: 10px;
+	}
+
+	/* Terminal demo card */
+	.terminal {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		overflow: hidden;
+		box-shadow: var(--shadow);
+	}
+	.term-bar {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		padding: 11px 14px;
+		background: var(--surface-2);
+		border-bottom: 1px solid var(--border);
+	}
+	.d-dot {
+		width: 11px;
+		height: 11px;
+		border-radius: 50%;
+		background: var(--surface-3);
+	}
+	.term-title {
+		margin-left: 10px;
+		font-size: 11.5px;
+		color: var(--text-faint);
+		letter-spacing: 0.04em;
+	}
+	.term-body {
+		margin: 0;
+		padding: 18px 16px;
+		font-size: 12.5px;
+		line-height: 1.7;
+		white-space: pre-wrap;
+		word-break: break-word;
+		color: var(--text);
+	}
+	.prompt {
+		color: var(--accent);
+		margin-right: 8px;
+		user-select: none;
+	}
+	.term-foot {
+		display: flex;
+		justify-content: flex-end;
+		padding: 12px 14px;
+		border-top: 1px solid var(--border-soft);
+		background: var(--surface-2);
+	}
+
+	.privacy {
+		display: flex;
+		gap: 12px;
+		margin-top: 20px;
+		padding: 14px 16px;
+		border: 1px solid color-mix(in srgb, var(--s-4xx) 30%, var(--border));
+		background: color-mix(in srgb, var(--s-4xx) 7%, var(--surface));
+		border-radius: var(--radius-sm);
+	}
+	.privacy p {
+		margin: 0;
+		font-size: 12.5px;
+		line-height: 1.6;
+		color: var(--text-dim);
+	}
+	.warn-ico {
+		color: var(--s-4xx);
+		font-size: 15px;
+		flex: none;
+	}
+
+	.foot {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding-top: 20px;
+		padding-bottom: 28px;
+		border-top: 1px solid var(--border-soft);
+		font-size: 12px;
+		color: var(--text-dim);
+	}
+	.foot .dim {
+		color: var(--text-faint);
+	}
+
+	.spinner {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		border: 2px solid rgba(10, 11, 13, 0.35);
+		border-top-color: #0a0b0d;
+		animation: spin 0.7s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.reveal {
+		opacity: 0;
+		transform: translateY(14px);
+		animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+		animation-delay: var(--d, 0ms);
+	}
+	@keyframes rise {
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	@media (max-width: 880px) {
+		.hero {
+			grid-template-columns: 1fr;
+			gap: 36px;
+			padding-top: 24px;
+		}
+	}
+</style>
