@@ -1,0 +1,216 @@
+/* TinyWebhook — phosphor-terminal design system.
+   Dark, monospace-forward, single electric-lime accent. Built for developers
+   reading raw HTTP. Display: Bricolage Grotesque. Data/UI: JetBrains Mono. */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+	/* Surfaces — near-black with layered elevations. */
+	--bg: #0a0b0d;
+	--bg-grid: #101216;
+	--surface: #121419;
+	--surface-2: #171a20;
+	--surface-3: #1d2128;
+	--border: #262b33;
+	--border-soft: #1c2028;
+
+	/* Text */
+	--text: #e7ebf0;
+	--text-dim: #99a1ad;
+	--text-faint: #5d6470;
+
+	/* Accent — phosphor lime. The one color people remember. */
+	--accent: #c6f135;
+	--accent-dim: #9bbd2a;
+	--accent-glow: rgba(198, 241, 53, 0.18);
+
+	/* HTTP method palette */
+	--m-get: #4ea1ff;
+	--m-post: #2fce8f;
+	--m-put: #f5b945;
+	--m-patch: #b07cff;
+	--m-delete: #ff5d6c;
+	--m-options: #8a93a3;
+	--m-head: #8a93a3;
+
+	/* Status palette */
+	--s-2xx: #2fce8f;
+	--s-3xx: #4ea1ff;
+	--s-4xx: #f5b945;
+	--s-5xx: #ff5d6c;
+
+	--radius: 10px;
+	--radius-sm: 6px;
+	--mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+	--display: 'Bricolage Grotesque', system-ui, sans-serif;
+
+	--shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.8);
+	--maxw: 1180px;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 14px;
+	line-height: 1.55;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+	/* Faint blueprint grid + radial glow for atmosphere. */
+	background-image:
+		radial-gradient(900px 500px at 78% -8%, var(--accent-glow), transparent 60%),
+		linear-gradient(var(--bg-grid) 1px, transparent 1px),
+		linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+	background-size: 100% 100%, 46px 46px, 46px 46px;
+	background-attachment: fixed;
+	min-height: 100vh;
+}
+
+h1,
+h2,
+h3 {
+	font-family: var(--display);
+	font-weight: 800;
+	letter-spacing: -0.02em;
+	line-height: 1.02;
+	margin: 0;
+}
+
+a {
+	color: var(--accent);
+	text-decoration: none;
+}
+a:hover {
+	text-decoration: underline;
+}
+
+button {
+	font-family: var(--mono);
+	cursor: pointer;
+}
+
+::selection {
+	background: var(--accent);
+	color: #0a0b0d;
+}
+
+/* Thin custom scrollbars to match the terminal feel. */
+*::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+	background: var(--surface-3);
+	border-radius: 8px;
+	border: 2px solid var(--bg);
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: #2b313b;
+}
+
+/* ---- Shared primitives ---- */
+
+.wrap {
+	width: 100%;
+	max-width: var(--maxw);
+	margin: 0 auto;
+	padding: 0 24px;
+}
+
+.mono {
+	font-family: var(--mono);
+}
+
+.eyebrow {
+	font-size: 11px;
+	letter-spacing: 0.22em;
+	text-transform: uppercase;
+	color: var(--accent-dim);
+	font-weight: 600;
+}
+
+/* Buttons */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 9px;
+	border: 1px solid var(--border);
+	background: var(--surface-2);
+	color: var(--text);
+	padding: 10px 16px;
+	border-radius: var(--radius-sm);
+	font-size: 13px;
+	font-weight: 600;
+	transition: border-color 0.15s, background 0.15s, transform 0.05s, color 0.15s;
+}
+.btn:hover {
+	border-color: #39414d;
+	background: var(--surface-3);
+}
+.btn:active {
+	transform: translateY(1px);
+}
+.btn-primary {
+	background: var(--accent);
+	color: #0a0b0d;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 0 var(--accent-glow);
+}
+.btn-primary:hover {
+	background: #d4ff45;
+	border-color: #d4ff45;
+	box-shadow: 0 0 30px -4px var(--accent-glow);
+}
+.btn-ghost {
+	background: transparent;
+}
+
+/* Code surface */
+.code {
+	font-family: var(--mono);
+	background: var(--surface);
+	border: 1px solid var(--border-soft);
+	border-radius: var(--radius-sm);
+	padding: 14px 16px;
+	color: var(--text);
+	overflow: auto;
+	white-space: pre;
+	font-size: 12.5px;
+	line-height: 1.7;
+}
+
+/* Generic chip */
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+	font-weight: 600;
+	padding: 3px 9px;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--text-dim);
+	background: var(--surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		transition-duration: 0.001ms !important;
+	}
+}
