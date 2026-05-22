@@ -8,16 +8,18 @@
 		request: RequestSummary;
 		selected?: boolean;
 		isNew?: boolean;
+		compact?: boolean;
 		now: number;
 		onselect: (id: string) => void;
 	}
-	let { request, selected = false, isNew = false, now, onselect }: Props = $props();
+	let { request, selected = false, isNew = false, compact = false, now, onselect }: Props = $props();
 </script>
 
 <button
 	class="row"
 	class:selected
 	class:fresh={isNew}
+	class:compact
 	onclick={() => onselect(request.id)}
 	type="button"
 	aria-pressed={selected}
@@ -56,6 +58,17 @@
 	.row.selected {
 		background: var(--surface-3);
 		box-shadow: inset 3px 0 0 var(--accent);
+	}
+
+	/* Condensed columns when the detail panel narrows the list pane.
+	   IP / Content-Type / Size are all visible in the open detail panel. */
+	.row.compact {
+		grid-template-columns: 68px minmax(0, 1fr) 64px 132px;
+	}
+	.row.compact .ip,
+	.row.compact .ct,
+	.row.compact .size {
+		display: none;
 	}
 	.path {
 		font-size: 13px;
