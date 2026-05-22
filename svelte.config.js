@@ -5,7 +5,13 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
-		adapter: adapter()
+		adapter: adapter(),
+		// This product exists to receive arbitrary cross-origin HTTP requests
+		// (webhooks from external services, form posts, text/plain, etc.). It has
+		// no auth, cookies, or sessions, so SvelteKit's origin-based CSRF check is
+		// both meaningless here and actively breaks the core use case (it 403s
+		// POST/PUT/PATCH/DELETE with form/text-plain bodies from foreign origins).
+		csrf: { checkOrigin: false }
 	}
 };
 
