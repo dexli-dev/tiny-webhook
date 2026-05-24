@@ -190,11 +190,10 @@ describe('XSS payloads stored verbatim (bar item 12)', () => {
 // -----------------------------------------------------------------------------
 
 describe('Malformed / abusive request inputs (bar item 10)', () => {
-	it('a CRLF-injection attempt in a header value is rejected by the platform before reaching the handler', () => {
+	it('platform-layer guard: undici/Request rejects any CRLF in a header value', () => {
 		// undici's Request constructor validates header field-values and refuses
-		// any embedded CR/LF — this is the very rejection we rely on. In a real
-		// HTTP request, Node's parser performs the equivalent check. Either way,
-		// our handler is never invoked with a malformed header.
+		// any embedded CR/LF. Node's HTTP parser performs the equivalent check on
+		// a real socket. This is the first line of defence.
 		expect(
 			() =>
 				new Request(`${ORIGIN}/in/anything`, {
@@ -202,6 +201,48 @@ describe('Malformed / abusive request inputs (bar item 10)', () => {
 					headers: { 'x-test': 'value\r\nX-Injected: yes' }
 				})
 		).toThrow();
+	});
+
+	it('server-side guard (cycle-3): a hand-built request with CRLF in a header value → strict 400, never recorded', async () => {
+		// Defence in depth: even if a future adapter or proxy bypasses the
+		// platform header validator, captureRequest scans the captured headers
+		// itself and the /in/[token] handler maps badHeaders → 400.
+		const inbox = createInbox(KEY);
+		const fakeReq = {
+			method: 'POST',
+			headers: {
+				get(name: string): string | null {
+					const lower = name.toLowerCase();
+					if (lower === 'x-evil') return 'value\r\nX-Injected: yes';
+					return null;
+				},
+				*[Symbol.iterator]() {
+					yield ['x-evil', 'value\r\nX-Injected: yes'] as [string, string];
+				}
+			},
+			arrayBuffer: async () => new ArrayBuffer(0),
+			signal: new AbortController().signal
+		};
+		const res = await receive({
+			request: fakeReq as unknown as Request,
+			url: new URL(`${ORIGIN}/in/${inbox.publicToken}`),
+			params: { token: inbox.publicToken },
+			getClientAddress: () => '1.1.1.1'
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
+		expect(res.status).toBe(400);
+
+		// Nothing recorded.
+		const view = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		const body = (await view.json()) as GetInboxResponse;
+		if (body.locked) throw new Error('unexpectedly locked');
+		expect(body.requests).toHaveLength(0);
 	});
 
 	it('a ~100 KB header value: handler accepts cleanly and stores it (real-network 431 is Node\'s job)', async () => {
@@ -378,5 +419,83 @@ describe('SSE subscriber caps (bar item 15)', () => {
 		expect(dec.decode(errFrame.value)).toContain('"reason":"capped"');
 
 		controllers.forEach((c) => c.abort());
+	});
+});
+
+// -----------------------------------------------------------------------------
+// Cycle-3 item 14 extension — GET /api/inboxes/[id] is always 200, with shape
+// parity between a real-but-locked inbox and a bogus id (synthetic shell).
+// -----------------------------------------------------------------------------
+
+describe('Inbox-read indistinguishability (cycle-3 item 14 extension)', () => {
+	it('bogus id and real-but-locked id return identical response shapes', async () => {
+		const real = createInbox(KEY);
+
+		const realLocked = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/${real.id}`, params: { id: real.id } })
+		);
+		const bogus = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/totallybogusid`,
+				params: { id: 'totallybogusid' }
+			})
+		);
+
+		expect(realLocked.status).toBe(bogus.status);
+		expect(realLocked.headers.get('content-type')).toBe(bogus.headers.get('content-type'));
+
+		const realBody = (await realLocked.json()) as GetInboxResponse;
+		const bogusBody = (await bogus.json()) as GetInboxResponse;
+		expect(realBody.locked).toBe(true);
+		expect(bogusBody.locked).toBe(true);
+		if (!realBody.locked || !bogusBody.locked) return;
+
+		// Structural parity — same keys at both levels, same value-domain types.
+		expect(Object.keys(realBody).sort()).toEqual(Object.keys(bogusBody).sort());
+		expect(Object.keys(realBody.shell).sort()).toEqual(Object.keys(bogusBody.shell).sort());
+		expect(typeof realBody.shell.publicToken).toBe('string');
+		expect(typeof bogusBody.shell.publicToken).toBe('string');
+		expect(bogusBody.shell.publicToken).toHaveLength(CONFIG.TOKEN_LENGTH);
+		expect(bogusBody.shell.id).toBe('totallybogusid');
+		expect(bogusBody.shell.requestCount).toBe(0);
+		expect(new Date(bogusBody.shell.expiresAt).getTime()).toBeGreaterThan(Date.now());
+	});
+
+	it('two bogus probes return independently-generated synthetic shells (drift is the contract)', async () => {
+		const a = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/probe-x`, params: { id: 'probe-x' } })
+		);
+		const b = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/probe-x`, params: { id: 'probe-x' } })
+		);
+		const ja = (await a.json()) as GetInboxResponse;
+		const jb = (await b.json()) as GetInboxResponse;
+		if (!ja.locked || !jb.locked) throw new Error('both should be locked');
+		// id echoed back the same; publicToken freshly random per call.
+		expect(ja.shell.id).toBe(jb.shell.id);
+		expect(ja.shell.publicToken).not.toBe(jb.shell.publicToken);
+	});
+});
+
+// -----------------------------------------------------------------------------
+// Cycle-3 item 23 — XFF integration: stored sourceIp comes from X-Forwarded-For
+// (the unit cases live in src/lib/server/receive.test.ts).
+// -----------------------------------------------------------------------------
+
+describe('X-Forwarded-For end-to-end (cycle-3 item 23)', () => {
+	it('captured sourceIp = XFF leftmost when the header is present', async () => {
+		const inbox = createInbox(KEY);
+		const stored = await postAndFetch(inbox, {
+			headers: { 'x-forwarded-for': '203.0.113.42, 10.0.0.1, 10.0.0.2' },
+			body: 'ok'
+		});
+		expect(stored.sourceIp).toBe('203.0.113.42');
+	});
+
+	it('captured sourceIp = getClientAddress() fallback when XFF is absent', async () => {
+		const inbox = createInbox(KEY);
+		const stored = await postAndFetch(inbox, { body: 'ok' });
+		// postAndFetch uses the makeEvent default getClientAddress.
+		expect(stored.sourceIp).toBe('203.0.113.9');
 	});
 });

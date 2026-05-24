@@ -277,11 +277,20 @@ describe('GET /api/inboxes/[id]/requests/[requestId]', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('404s for an unknown inbox', async () => {
+	it('returns 200 + synthetic locked shell for an unknown inbox (cycle-3 item 14)', async () => {
 		const res = await getInboxEndpoint(
 			makeEvent({ url: `${ORIGIN}/api/inboxes/nope`, params: { id: 'nope' } })
 		);
-		expect(res.status).toBe(404);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as GetInboxResponse;
+		expect(body.locked).toBe(true);
+		if (!body.locked) return;
+		expect(body.shell.id).toBe('nope');
+		// publicToken is a fresh random of the configured length; expiresAt is
+		// a fresh ISO timestamp. Caller can't distinguish from a real locked shell.
+		expect(body.shell.publicToken).toHaveLength(CONFIG.TOKEN_LENGTH);
+		expect(body.shell.requestCount).toBe(0);
+		expect(new Date(body.shell.expiresAt).getTime()).toBeGreaterThan(Date.now());
 	});
 });
 

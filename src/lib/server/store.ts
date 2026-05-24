@@ -209,6 +209,30 @@ export function inboxShell(id: string): InboxShell | undefined {
 	};
 }
 
+/**
+ * Synthetic locked-shell for a nonexistent inbox id (cycle-3, bar item 14
+ * extension). The GET /api/inboxes/[id] endpoint returns this when no real
+ * inbox matches `id`, making bogus-id probes shape-indistinguishable from
+ * real-but-locked inboxes.
+ *
+ * The publicToken is freshly random per call from the same alphabet as real
+ * tokens; an attacker repeat-probing the same bogus id therefore sees the
+ * token drift, but every individual response shape (and field domains) matches
+ * a real locked shell. expiresAt is freshly computed for the same reason.
+ *
+ * The supplied id is echoed back verbatim — that's the only field a caller
+ * could compare across probes, and a real locked response would echo the id
+ * the caller asked for too.
+ */
+export function synthShell(id: string): InboxShell {
+	return {
+		id,
+		publicToken: randomToken(CONFIG.TOKEN_LENGTH),
+		expiresAt: new Date(Date.now() + CONFIG.INBOX_TTL_MS).toISOString(),
+		requestCount: 0
+	};
+}
+
 export function listRequests(id: string): RequestSummary[] | undefined {
 	const rec = state.inboxes.get(id);
 	if (!rec || isExpired(rec.inbox)) return undefined;
