@@ -4,24 +4,30 @@
 	import type {
 		GetInboxResponse,
 		Inbox,
+		InboxShell,
 		RequestSummary,
 		WebhookRequest,
 		InboxEvent
 	} from '$lib/types';
 	import { exampleCurl } from '$lib/utils';
+	import { getStoredInbox, hasSeenFirstWarning } from '$lib/storage';
+	import { openSseStream, type SseHandle } from '$lib/sse-stream';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import Countdown from '$lib/components/Countdown.svelte';
 	import ConnectionStatus, { type ConnState } from '$lib/components/ConnectionStatus.svelte';
 	import RequestRow from '$lib/components/RequestRow.svelte';
 	import RequestDetail from '$lib/components/RequestDetail.svelte';
+	import LockedShell from '$lib/components/LockedShell.svelte';
+	import FirstCreateWarning from '$lib/components/FirstCreateWarning.svelte';
 
 	let inboxId = $derived($page.params.id);
 
-	type LoadState = 'loading' | 'ok' | 'notfound' | 'error';
+	type LoadState = 'loading' | 'ok' | 'locked' | 'notfound' | 'error';
 	let loadState = $state<LoadState>('loading');
 	let loadError = $state<string | null>(null);
 
 	let inbox = $state<Inbox | null>(null);
+	let lockedShell = $state<InboxShell | null>(null);
 	let requests = $state<RequestSummary[]>([]);
 	let expiredFlag = $state(false);
 
@@ -32,14 +38,26 @@
 	let origin = $state('');
 	let webhookUrl = $derived(inbox ? `${origin}/in/${inbox.publicToken}` : '');
 
+	// Per-inbox key from localStorage. Only the browser that created the inbox
+	// holds it; without it the server returns the locked-shell view.
+	let storedKey = $state<string | null>(null);
+	let showFirstWarning = $state(false);
+
 	// Detail panel
 	let selectedId = $state<string | null>(null);
 	let selectedRequest = $state<WebhookRequest | null>(null);
 	let detailLoading = $state(false);
 	let detailError = $state<string | null>(null);
 
-	let source: EventSource | null = null;
+	let sseHandle: SseHandle | null = null;
 	let nowTimer: ReturnType<typeof setInterval> | undefined;
+	let networkRetries = 0;
+	const MAX_NETWORK_RETRIES = 1;
+	const RETRY_DELAY_MS = 3000;
+
+	function authHeaders(): Record<string, string> {
+		return storedKey ? { Authorization: `Bearer ${storedKey}` } : {};
+	}
 
 	function sortDesc(list: RequestSummary[]): RequestSummary[] {
 		return [...list].sort(
@@ -50,7 +68,7 @@
 	async function loadInbox() {
 		loadState = 'loading';
 		try {
-			const res = await fetch(`/api/inboxes/${inboxId}`);
+			const res = await fetch(`/api/inboxes/${inboxId}`, { headers: authHeaders() });
 			if (res.status === 404) {
 				loadState = 'notfound';
 				return;
@@ -58,17 +76,14 @@
 			if (!res.ok) throw new Error(`Failed to load inbox (${res.status})`);
 			const data = (await res.json()) as GetInboxResponse;
 			if (data.locked) {
-				// cycle-2 scaffold placeholder — the frontend slice replaces this
-				// with the locked-shell UI required by bar items 18-22 (different
-				// browser / cleared storage flows). For now we render the
-				// existing "not found" state so the page doesn't crash.
-				loadState = 'notfound';
-				loadError = 'This inbox is locked to the browser that created it.';
+				lockedShell = data.shell;
+				loadState = 'locked';
 				return;
 			}
 			inbox = data.inbox;
 			requests = sortDesc(data.requests);
 			loadState = 'ok';
+			if (storedKey && !hasSeenFirstWarning()) showFirstWarning = true;
 			openStream();
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Something went wrong.';
@@ -100,43 +115,64 @@
 	}
 
 	function openStream() {
-		if (typeof EventSource === 'undefined') return;
 		closeStream();
 		conn = 'connecting';
-		source = new EventSource(`/api/inboxes/${inboxId}/events`);
-
-		source.onopen = () => (conn = 'connected');
-		source.onerror = () => {
-			// EventSource auto-retries while readyState !== CLOSED.
-			conn = source && source.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting';
-		};
-		source.onmessage = (e) => {
-			try {
-				handleEvent(JSON.parse(e.data) as InboxEvent);
-			} catch {
-				/* ignore malformed frames */
+		sseHandle = openSseStream(`/api/inboxes/${inboxId}/events`, {
+			headers: { ...authHeaders() },
+			handlers: {
+				onOpen() {
+					conn = 'connected';
+					networkRetries = 0;
+				},
+				onMessage(data) {
+					if (data && typeof data === 'object' && 'type' in (data as object)) {
+						handleEvent(data as InboxEvent);
+					}
+				},
+				onNamedEvent(name, data) {
+					if (name === 'expired') handleEvent({ type: 'expired' });
+					if (name === 'request' && data && typeof data === 'object') {
+						handleEvent({ type: 'request', request: data as RequestSummary });
+					}
+				},
+				onClose(reason) {
+					sseHandle = null;
+					if (reason === 'capped') {
+						conn = 'capped';
+					} else if (reason === 'aborted') {
+						// We closed it ourselves — leave conn alone.
+					} else if (expiredFlag) {
+						conn = 'closed';
+					} else if (reason === 'network' && networkRetries < MAX_NETWORK_RETRIES) {
+						networkRetries++;
+						conn = 'reconnecting';
+						setTimeout(() => {
+							if (!expiredFlag) openStream();
+						}, RETRY_DELAY_MS);
+					} else {
+						conn = 'closed';
+					}
+				}
 			}
-		};
-		// Tolerate named events too, in case the server uses them.
-		source.addEventListener('expired', () => handleEvent({ type: 'expired' }));
+		});
 	}
 
 	function closeStream() {
-		source?.close();
-		source = null;
+		sseHandle?.abort();
+		sseHandle = null;
 	}
 
 	async function selectRequest(id: string) {
 		selectedId = id;
 		detailError = null;
-		// Show panel immediately; fill in once fetched.
 		detailLoading = true;
 		selectedRequest = null;
 		try {
-			const res = await fetch(`/api/inboxes/${inboxId}/requests/${id}`);
+			const res = await fetch(`/api/inboxes/${inboxId}/requests/${id}`, {
+				headers: authHeaders()
+			});
 			if (!res.ok) throw new Error(`Could not load request (${res.status})`);
 			const data = (await res.json()) as WebhookRequest;
-			// Guard against an out-of-order response after another selection.
 			if (selectedId === id) selectedRequest = data;
 		} catch (e) {
 			if (selectedId === id) detailError = e instanceof Error ? e.message : 'Failed to load request.';
@@ -153,6 +189,8 @@
 
 	onMount(() => {
 		origin = window.location.origin;
+		const record = inboxId ? getStoredInbox(inboxId) : null;
+		storedKey = record?.key ?? null;
 		nowTimer = setInterval(() => (now = Date.now()), 5000);
 		loadInbox();
 	});
@@ -206,6 +244,8 @@
 				<button class="btn" onclick={loadInbox} type="button">Retry</button>
 			</div>
 		</main>
+	{:else if loadState === 'locked' && lockedShell}
+		<LockedShell shell={lockedShell} {origin} />
 	{:else if inbox}
 		<!-- URL bar -->
 		<section class="wrap urlbar">
@@ -220,6 +260,10 @@
 				</p>
 			{/if}
 		</section>
+
+		{#if showFirstWarning}
+			<FirstCreateWarning ondismiss={() => (showFirstWarning = false)} />
+		{/if}
 
 		<!-- Body: list + detail -->
 		<main class="wrap board" class:has-detail={selectedId !== null}>

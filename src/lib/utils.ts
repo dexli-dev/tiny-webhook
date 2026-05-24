@@ -106,8 +106,17 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-// Headers curl manages itself — omitting them keeps the replay clean and correct.
-const SKIP_REPLAY_HEADERS = new Set(['host', 'content-length', 'connection', 'accept-encoding']);
+// Headers curl manages itself, plus auth/cookie material the caller may have
+// sent. Omitting `authorization` and `cookie` prevents the copy-curl button
+// from handing a stranger ready-to-replay credentials lifted from a webhook.
+const SKIP_REPLAY_HEADERS = new Set([
+	'host',
+	'content-length',
+	'connection',
+	'accept-encoding',
+	'authorization',
+	'cookie'
+]);
 
 /**
  * Build a runnable curl command that replays the request against `origin`.

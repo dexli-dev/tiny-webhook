@@ -1,6 +1,8 @@
 <script lang="ts">
 	// Realtime SSE connection indicator.
-	export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
+	// 'capped' = server refused another subscriber for this inbox; the stream
+	// is terminal and we deliberately do not auto-reconnect.
+	export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'capped';
 
 	interface Props {
 		state: ConnState;
@@ -11,7 +13,8 @@
 		connecting: 'Connecting',
 		connected: 'Live',
 		reconnecting: 'Reconnecting',
-		closed: 'Offline'
+		closed: 'Offline',
+		capped: 'Too many viewers'
 	};
 </script>
 
@@ -62,6 +65,13 @@
 	}
 	.closed .dot {
 		background: var(--s-5xx);
+	}
+	.capped {
+		color: var(--s-4xx);
+		border-color: color-mix(in srgb, var(--s-4xx) 40%, var(--border));
+	}
+	.capped .dot {
+		background: var(--s-4xx);
 	}
 
 	@keyframes pulse {
