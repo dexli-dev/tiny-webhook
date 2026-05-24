@@ -3,6 +3,11 @@
 // Accepts any of CONFIG.ACCEPTED_METHODS, captures the request, and stores it
 // against the inbox identified by the public token. A sibling catch-all route
 // ([...rest]) handles subpaths like /in/abc/x/y.
+//
+// Per cycle-2 bar item 14, the response shape is UNIFORM whether or not the
+// token belongs to a real inbox: 200 {"ok":true} either way. Real tokens
+// record; nonexistent tokens are silently discarded. This defeats token
+// enumeration via response signal.
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
@@ -22,11 +27,9 @@ const handle: RequestHandler = async (event) => {
 		return json(body, { status: 413 });
 	}
 
-	const stored = recordRequest(token, result.input);
-	if (!stored) {
-		const body: ApiError = { error: 'Inbox not found or expired.' };
-		return json(body, { status: 404 });
-	}
+	// recordRequest returns null for unknown/expired tokens. We deliberately
+	// discard that information and respond identically — see bar item 14.
+	recordRequest(token, result.input);
 
 	const ok: ReceiveResponse = { ok: true };
 	return json(ok, { status: 200 });

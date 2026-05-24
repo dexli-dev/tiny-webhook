@@ -57,8 +57,17 @@
 			}
 			if (!res.ok) throw new Error(`Failed to load inbox (${res.status})`);
 			const data = (await res.json()) as GetInboxResponse;
+			if (data.locked) {
+				// cycle-2 scaffold placeholder — the frontend slice replaces this
+				// with the locked-shell UI required by bar items 18-22 (different
+				// browser / cleared storage flows). For now we render the
+				// existing "not found" state so the page doesn't crash.
+				loadState = 'notfound';
+				loadError = 'This inbox is locked to the browser that created it.';
+				return;
+			}
 			inbox = data.inbox;
-			requests = sortDesc(data.requests ?? []);
+			requests = sortDesc(data.requests);
 			loadState = 'ok';
 			openStream();
 		} catch (e) {

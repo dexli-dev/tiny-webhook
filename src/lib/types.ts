@@ -1,4 +1,4 @@
-// Shared data contract between server and client. SPEC §10 + §11.
+// Shared data contract between server and client. SPEC §10–§11 + cycle-2 keying.
 // These shapes are the API contract — do not change without coordinating
 // across backend (producer) and frontend (consumer).
 
@@ -31,7 +31,10 @@ export interface WebhookRequest {
 	responseStatus: number;
 }
 
-/** A webhook inbox. */
+/**
+ * Public inbox shape returned to clients. The server-side keyHash is intentionally
+ * absent here — it never leaves the server.
+ */
 export interface Inbox {
 	id: string;
 	publicToken: string;
@@ -43,9 +46,31 @@ export interface Inbox {
 	isPrivate: boolean;
 }
 
-// ---- API response shapes (SPEC §11) ----
+/**
+ * Minimal inbox view returned when a caller does not present a valid key
+ * (different browser, cleared localStorage, etc.). Per bar item 20, the URL,
+ * expiration, and request count remain visible so the user understands the
+ * inbox exists — but no captured content is included.
+ */
+export interface InboxShell {
+	id: string;
+	publicToken: string;
+	expiresAt: string;
+	requestCount: number;
+}
 
-/** POST /api/inboxes */
+// ---- API request/response shapes ----
+
+/**
+ * POST /api/inboxes — request body. `key` is a base64url-encoded 256-bit random
+ * value generated in-browser at inbox creation (bar items 18-19). The server
+ * stores only its SHA-256 hash.
+ */
+export interface CreateInboxRequest {
+	key: string;
+}
+
+/** POST /api/inboxes — success response. */
 export interface CreateInboxResponse {
 	inboxId: string;
 	publicToken: string;
@@ -68,13 +93,19 @@ export interface RequestSummary {
 	bodySizeBytes: number;
 }
 
-/** GET /api/inboxes/{id} */
-export interface GetInboxResponse {
-	inbox: Inbox;
-	requests: RequestSummary[];
-}
+/**
+ * GET /api/inboxes/{id} — discriminated by `locked`.
+ *
+ * `locked: false` is returned only to a caller who presented the correct
+ * Bearer key (Authorization header). `locked: true` is returned for any inbox
+ * that exists without a valid key — different browser, cleared storage, etc.
+ * Truly nonexistent inbox ids respond 404.
+ */
+export type GetInboxResponse =
+	| { locked: false; inbox: Inbox; requests: RequestSummary[] }
+	| { locked: true; shell: InboxShell };
 
-/** GET /api/inboxes/{id}/requests/{requestId} — full WebhookRequest. */
+/** GET /api/inboxes/{id}/requests/{requestId} — full WebhookRequest. Bearer-key gated. */
 export type GetRequestResponse = WebhookRequest;
 
 /** The receive endpoint response body (SPEC §5.8). */
