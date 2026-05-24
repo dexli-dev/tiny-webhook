@@ -16,9 +16,41 @@ export type CaptureResult =
 	 * A captured header value contained CR or LF — either the platform's parser
 	 * let it through or a downstream caller fabricated a Request. We refuse the
 	 * capture: the handler returns 400 with a generic body and does NOT record.
-	 * Defence in depth against header-injection (cycle-3, bar item 12).
+	 * Defence in depth against in-value CR/LF (cycle-3, bar item 12).
 	 */
-	| { ok: false; badHeaders: true };
+	| { ok: false; badHeaders: true }
+	/**
+	 * A captured header name belongs to the response-only header blocklist
+	 * (Set-Cookie, Server, WWW-Authenticate, etc.). The practical reason
+	 * CRLF-in-headers matters is that an attacker wants to influence response
+	 * headers; legitimate webhooks never send these names TO us. A wire-level
+	 * `\r\n` smuggling probe (e.g. `X-Test: a\r\nSet-Cookie: pwn=1`) is split
+	 * by Node's HTTP parser into two well-formed headers before our handler
+	 * sees it, so the in-value scan above is blind to it — this blocklist is
+	 * what catches it (cycle-3a, bar item 12).
+	 */
+	| { ok: false; headerInjection: true };
+
+/**
+ * Response-only / smuggled-header names that should never appear on an inbound
+ * webhook. Lowercased; comparison is case-insensitive because the platform
+ * lowercases header names during parsing.
+ */
+const RESPONSE_ONLY_HEADERS: ReadonlySet<string> = new Set([
+	'set-cookie',
+	'set-cookie2',
+	'server',
+	'www-authenticate',
+	'proxy-authenticate',
+	'strict-transport-security',
+	'content-security-policy',
+	'content-security-policy-report-only',
+	'x-frame-options',
+	'x-content-type-options',
+	'x-xss-protection',
+	'public-key-pins',
+	'location'
+]);
 
 /**
  * Best-effort source IP: first hop of x-forwarded-for, else the transport peer.
@@ -73,15 +105,28 @@ export async function captureRequest(
 
 	const headers: HeaderPair[] = [...request.headers];
 
-	// Strict CR/LF guard (cycle-3). Real-world Request/Headers constructors and
-	// Node's HTTP parser already reject these, but we re-check here so anything
-	// that bypasses the platform layer (a hand-built Request in a test, a future
-	// adapter, a raw upstream proxy) cannot smuggle a fake header line into the
-	// captured record. Refusal is non-recording: the request is dropped on the
-	// floor with a 400, no inbox write, no SSE emission.
-	for (const [, value] of headers) {
+	// Header guards (cycle-3 + cycle-3a). Two separate checks against two
+	// different attacker pathways:
+	//
+	//   1. CR/LF inside a single header value — the platform parser would
+	//      normally reject this, but defence in depth covers any future adapter
+	//      or hand-built Request that bypasses validation.
+	//
+	//   2. A response-only header name on an inbound request. This is what
+	//      catches a wire-level `X-Test: a\r\nSet-Cookie: pwn=1` probe: Node's
+	//      HTTP parser splits at the CRLF and presents Set-Cookie as a normal
+	//      header, so check (1) sees nothing. Legitimate webhooks never send
+	//      response-only headers to us; flagging them is both correct and
+	//      sufficient to defeat the practical attack (response-header smuggling).
+	//
+	// Both refusals are non-recording: 400 + generic body, no inbox write, no
+	// SSE emission.
+	for (const [name, value] of headers) {
 		if (value.includes('\r') || value.includes('\n')) {
 			return { ok: false, badHeaders: true };
+		}
+		if (RESPONSE_ONLY_HEADERS.has(name.toLowerCase())) {
+			return { ok: false, headerInjection: true };
 		}
 	}
 

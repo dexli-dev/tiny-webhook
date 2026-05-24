@@ -240,7 +240,7 @@ describe('GET /api/inboxes/[id] auth gating', () => {
 });
 
 describe('GET /api/inboxes/[id]/requests/[requestId]', () => {
-	it('returns full request detail with correct auth and 404s on miss', async () => {
+	it('returns full request detail with correct auth; authed-bogus rid → 200 synthetic (cycle-3a item 14)', async () => {
 		const inbox = createInbox(TEST_KEY);
 		const stored = recordRequest(inbox.publicToken, input({ method: 'PUT', bodyText: 'payload' }))!;
 
@@ -255,6 +255,8 @@ describe('GET /api/inboxes/[id]/requests/[requestId]', () => {
 		expect(full.method).toBe('PUT');
 		expect(full.bodyText).toBe('payload');
 
+		// Authed + missing rid → 200 + synthetic WebhookRequest (same shape),
+		// so authed callers cannot enumerate which rids exist.
 		const miss = await getRequestEndpoint(
 			makeEvent({
 				url: `${ORIGIN}/api/inboxes/${inbox.id}/requests/nope`,
@@ -262,7 +264,11 @@ describe('GET /api/inboxes/[id]/requests/[requestId]', () => {
 				headers: authHeaders()
 			})
 		);
-		expect(miss.status).toBe(404);
+		expect(miss.status).toBe(200);
+		const synth = (await miss.json()) as WebhookRequest;
+		expect(synth.id).toBe('nope');
+		expect(synth.inboxId).toBe(inbox.id);
+		expect(synth.bodyText).toBe('');
 	});
 
 	it('404s without auth (no leak of which request ids exist)', async () => {
