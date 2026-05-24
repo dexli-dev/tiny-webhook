@@ -527,6 +527,53 @@ describe('Inbox-read indistinguishability (cycle-3 item 14 extension)', () => {
 		expect(jb).toEqual(ja);
 	});
 
+	it('TIME-DOMAIN (cycle-3a-followup): synthetic locked-shell expiresAt is strictly in the FUTURE, never in the past', async () => {
+		// Bug surface this regression-tests: an earlier synth formula could place
+		// expiresAt before now (when offset > container uptime). A real inbox would
+		// have been swept by then — so expiresAt < now is a trivial "this is bogus"
+		// oracle. The fix anchors synth times to a small window before/after
+		// PROCESS_BOOT so they always look temporally plausible.
+		const res = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/time-domain-probe-1`, params: { id: 'time-domain-probe-1' } })
+		);
+		const body = (await res.json()) as GetInboxResponse;
+		if (!body.locked) throw new Error('should be locked');
+		expect(new Date(body.shell.expiresAt).getTime()).toBeGreaterThan(Date.now());
+	});
+
+	it('TIME-DOMAIN: authed-bogus synthetic Inbox has createdAt < now AND expiresAt > now AND expiresAt = createdAt + INBOX_TTL_MS', async () => {
+		const res = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/time-domain-probe-2`,
+				params: { id: 'time-domain-probe-2' },
+				headers: authHeaders()
+			})
+		);
+		const body = (await res.json()) as GetInboxResponse;
+		if (body.locked) throw new Error('should be unlocked synthetic');
+		const created = new Date(body.inbox.createdAt).getTime();
+		const expires = new Date(body.inbox.expiresAt).getTime();
+		expect(created).toBeLessThan(Date.now());
+		expect(expires).toBeGreaterThan(Date.now());
+		expect(expires - created).toBe(CONFIG.INBOX_TTL_MS);
+	});
+
+	it('TIME-DOMAIN: synthetic WebhookRequest (real inbox + bogus rid) has receivedAt < now', async () => {
+		// synthRequest only fires when auth succeeds (real inbox + correct key)
+		// AND the rid is missing — that's the auth'd-bogus-rid enumeration case.
+		const real = createInbox(KEY);
+		const res = await getRequestEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${real.id}/requests/synthrid-zzz`,
+				params: { id: real.id, requestId: 'synthrid-zzz' },
+				headers: authHeaders()
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as WebhookRequest;
+		expect(new Date(body.receivedAt).getTime()).toBeLessThan(Date.now());
+	});
+
 	it('STABILITY across different bogus ids: outputs DIFFER (no degenerate "same shell for all" case)', async () => {
 		const a = await getInboxEndpoint(
 			makeEvent({ url: `${ORIGIN}/api/inboxes/probe-a`, params: { id: 'probe-a' } })
