@@ -4,26 +4,65 @@ import { captureRequest, clientIp } from './receive';
 
 const addr = () => '203.0.113.1';
 
-describe('clientIp', () => {
-	it('uses the first x-forwarded-for hop when present', () => {
-		const req = new Request('http://x/in/t', {
-			headers: { 'x-forwarded-for': '70.0.0.9, 10.0.0.1, 10.0.0.2' }
-		});
-		expect(clientIp(req, addr)).toBe('70.0.0.9');
-	});
-
-	it('falls back to the transport address with no XFF', () => {
+describe('clientIp / X-Forwarded-For (bar item 23)', () => {
+	it('no XFF header → falls back to getClientAddress', () => {
 		const req = new Request('http://x/in/t');
 		expect(clientIp(req, addr)).toBe('203.0.113.1');
 	});
 
-	it('falls back to "unknown" when the resolver throws', () => {
+	it('single-hop XFF "1.2.3.4" → captured as "1.2.3.4"', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'x-forwarded-for': '1.2.3.4' }
+		});
+		expect(clientIp(req, addr)).toBe('1.2.3.4');
+	});
+
+	it('multi-hop XFF takes the leftmost (closest-to-client) hop', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'x-forwarded-for': '1.2.3.4, 5.6.7.8, 10.0.0.1' }
+		});
+		expect(clientIp(req, addr)).toBe('1.2.3.4');
+	});
+
+	it('whitespace-only XFF → falls back to getClientAddress', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'x-forwarded-for': '   ' }
+		});
+		expect(clientIp(req, addr)).toBe('203.0.113.1');
+	});
+
+	it('leading-comma XFF (first hop empty) → falls back to getClientAddress', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'x-forwarded-for': ', 10.0.0.1' }
+		});
+		expect(clientIp(req, addr)).toBe('203.0.113.1');
+	});
+
+	it('XFF present but getClientAddress would throw → returns the XFF hop (no fallback needed)', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'x-forwarded-for': '70.0.0.9' }
+		});
+		expect(
+			clientIp(req, () => {
+				throw new Error('no peer');
+			})
+		).toBe('70.0.0.9');
+	});
+
+	it('no XFF + getClientAddress throws → returns "unknown"', () => {
 		const req = new Request('http://x/in/t');
 		expect(
 			clientIp(req, () => {
 				throw new Error('no peer');
 			})
 		).toBe('unknown');
+	});
+
+	it('whitespace around an XFF hop is trimmed', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'x-forwarded-for': '  198.51.100.42  , 10.0.0.1' }
+		});
+		expect(clientIp(req, addr)).toBe('198.51.100.42');
 	});
 });
 
@@ -81,7 +120,7 @@ describe('captureRequest', () => {
 		const req = new Request(url, { method: 'POST', body: big });
 		const res = await captureRequest(req, url, addr);
 		expect(res.ok).toBe(false);
-		if (res.ok) return;
+		if (res.ok || !('tooLarge' in res)) throw new Error('expected tooLarge');
 		expect(res.tooLarge).toBe(true);
 		expect(res.size).toBe(CONFIG.MAX_BODY_BYTES + 1);
 	});
@@ -95,7 +134,7 @@ describe('captureRequest', () => {
 		});
 		const res = await captureRequest(req, url, addr);
 		expect(res.ok).toBe(false);
-		if (res.ok) return;
+		if (res.ok || !('tooLarge' in res)) throw new Error('expected tooLarge');
 		expect(res.size).toBe(CONFIG.MAX_BODY_BYTES + 100);
 	});
 

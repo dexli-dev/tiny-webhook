@@ -11,7 +11,14 @@ import type { HeaderPair } from '$lib/types';
 export type CaptureResult =
 	| { ok: true; input: CapturedInput }
 	/** Body exceeded CONFIG.MAX_BODY_BYTES. Handler should return 413 and not record. */
-	| { ok: false; tooLarge: true; size: number };
+	| { ok: false; tooLarge: true; size: number }
+	/**
+	 * A captured header value contained CR or LF — either the platform's parser
+	 * let it through or a downstream caller fabricated a Request. We refuse the
+	 * capture: the handler returns 400 with a generic body and does NOT record.
+	 * Defence in depth against header-injection (cycle-3, bar item 12).
+	 */
+	| { ok: false; badHeaders: true };
 
 /**
  * Best-effort source IP: first hop of x-forwarded-for, else the transport peer.
@@ -65,6 +72,18 @@ export async function captureRequest(
 	const bodyText = bodySizeBytes > 0 ? new TextDecoder().decode(bytes) : '';
 
 	const headers: HeaderPair[] = [...request.headers];
+
+	// Strict CR/LF guard (cycle-3). Real-world Request/Headers constructors and
+	// Node's HTTP parser already reject these, but we re-check here so anything
+	// that bypasses the platform layer (a hand-built Request in a test, a future
+	// adapter, a raw upstream proxy) cannot smuggle a fake header line into the
+	// captured record. Refusal is non-recording: the request is dropped on the
+	// floor with a 400, no inbox write, no SSE emission.
+	for (const [, value] of headers) {
+		if (value.includes('\r') || value.includes('\n')) {
+			return { ok: false, badHeaders: true };
+		}
+	}
 
 	const input: CapturedInput = {
 		method: request.method,

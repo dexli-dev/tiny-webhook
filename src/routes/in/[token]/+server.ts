@@ -21,10 +21,15 @@ const handle: RequestHandler = async (event) => {
 
 	const result = await captureRequest(event.request, event.url, event.getClientAddress);
 	if (!result.ok) {
-		const body: ApiError = {
-			error: `Request body exceeds the limit of ${CONFIG.MAX_BODY_BYTES} bytes (got ${result.size}).`
-		};
-		return json(body, { status: 413 });
+		if ('tooLarge' in result) {
+			const body: ApiError = {
+				error: `Request body exceeds the limit of ${CONFIG.MAX_BODY_BYTES} bytes (got ${result.size}).`
+			};
+			return json(body, { status: 413 });
+		}
+		// badHeaders: CRLF in a header value. Generic 400 — never record.
+		const body: ApiError = { error: 'Request headers contain invalid characters.' };
+		return json(body, { status: 400 });
 	}
 
 	// recordRequest returns null for unknown/expired tokens. We deliberately
