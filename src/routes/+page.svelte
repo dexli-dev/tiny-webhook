@@ -1,38 +1,76 @@
 <script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import type { CreateInboxResponse, ApiError } from '$lib/types';
+	import type { CreateInboxRequest, CreateInboxResponse, ApiError } from '$lib/types';
+	import {
+		generateInboxKey,
+		listActiveInboxes,
+		saveStoredInbox,
+		type StoredInboxEntry
+	} from '$lib/storage';
 	import CopyButton from '$lib/components/CopyButton.svelte';
+	import ActiveInboxes from '$lib/components/ActiveInboxes.svelte';
 
 	let creating = $state(false);
 	let errorMsg = $state<string | null>(null);
+	let activeInboxes = $state<StoredInboxEntry[]>([]);
+	let origin = $state('');
+	let pruneTimer: ReturnType<typeof setInterval> | undefined;
 
 	const sampleCurl = `curl -X POST https://tinywebhook.site/in/abc123 \\
   -H 'Content-Type: application/json' \\
   -d '{"event":"checkout.completed","amount":4200}'`;
+
+	function refreshActive() {
+		activeInboxes = listActiveInboxes();
+	}
 
 	async function createInbox() {
 		if (creating) return;
 		creating = true;
 		errorMsg = null;
 		try {
-			const res = await fetch('/api/inboxes', { method: 'POST' });
+			const key = generateInboxKey();
+			const body: CreateInboxRequest = { key };
+			const res = await fetch('/api/inboxes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			});
 			if (!res.ok) {
 				let detail = `Request failed (${res.status})`;
 				try {
-					const body = (await res.json()) as ApiError;
-					if (body?.error) detail = body.error;
+					const errBody = (await res.json()) as ApiError;
+					if (errBody?.error) detail = errBody.error;
 				} catch {
 					/* keep default */
 				}
 				throw new Error(detail);
 			}
 			const data = (await res.json()) as CreateInboxResponse;
+			saveStoredInbox(data.inboxId, {
+				key,
+				publicToken: data.publicToken,
+				expiresAt: data.expiresAt,
+				createdAt: new Date().toISOString()
+			});
+			refreshActive();
 			await goto(`/inbox/${data.inboxId}`);
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : 'Could not create an inbox. Try again.';
 			creating = false;
 		}
 	}
+
+	onMount(() => {
+		origin = window.location.origin;
+		refreshActive();
+		// Re-prune every 30s so cards drop when their countdowns hit zero
+		// while the user lingers on the homepage.
+		pruneTimer = setInterval(refreshActive, 30_000);
+	});
+
+	onDestroy(() => clearInterval(pruneTimer));
 </script>
 
 <svelte:head>
@@ -47,6 +85,8 @@
 		</a>
 		<span class="chip">no signup · 24h inboxes</span>
 	</header>
+
+	<ActiveInboxes inboxes={activeInboxes} {origin} />
 
 	<main class="hero wrap">
 		<div class="hero-copy">
@@ -88,6 +128,7 @@
 				<li><span class="tick">▸</span> Real-time delivery over SSE</li>
 				<li><span class="tick">▸</span> Pretty JSON + raw body view</li>
 				<li><span class="tick">▸</span> One-click curl replay</li>
+				<li><span class="tick">▸</span> Locked to your browser — keys never leave the device</li>
 			</ul>
 		</div>
 
