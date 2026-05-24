@@ -294,6 +294,9 @@
 	.term-body {
 		margin: 0;
 		padding: 18px 16px;
+		/* <pre>'s UA stylesheet sets font-family: monospace, which would mask
+		   the body's JetBrains Mono declaration via the cascade. Re-declare. */
+		font-family: var(--mono);
 		font-size: 12.5px;
 		line-height: 1.7;
 		white-space: pre-wrap;
