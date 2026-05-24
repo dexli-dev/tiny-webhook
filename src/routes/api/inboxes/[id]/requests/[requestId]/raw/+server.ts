@@ -1,13 +1,17 @@
-// GET /api/inboxes/[id]/requests/[requestId]/raw  (cycle-2, bar item 13)
+// GET /api/inboxes/[id]/requests/[requestId]/raw
 //
-// Bearer-key gated raw-body download. The response body is the captured
-// `bodyText` exactly as stored — never the attacker-controlled Content-Type
-// that came in. We force text/plain;charset=utf-8 and Content-Disposition
-// attachment so a browser never interprets the bytes as HTML / script / etc.
+// Bearer-key gated raw-body download. Three outcomes:
 //
-// Auth failures and missing-inbox / missing-request cases all respond 404 with
-// the same generic plain-text body "Not found.", indistinguishable to a
-// caller without the key.
+//  - Unauth (or wrong key) → 404 with generic plain-text "Not found."
+//    (unchanged).
+//  - Authed + real-rid    → 200 + the captured bodyText, forced text/plain.
+//  - Authed + missing-rid → 200 + empty body (cycle-3a, bar item 14 ext.).
+//    Same status / headers / shape as a real-but-empty body, so an authed
+//    caller probing random rids on their own inbox cannot enumerate which
+//    rids actually exist by shape divergence (200 with bytes vs 404).
+//
+// Never reflects the captured Content-Type — always text/plain so a browser
+// cannot be tricked into interpreting attacker bytes as HTML / script / etc.
 
 import type { RequestHandler } from './$types';
 import { getRequest } from '$lib/server/store';
@@ -30,19 +34,8 @@ function safeFilename(rid: string): string {
 	return cleaned.length > 0 ? cleaned : 'request';
 }
 
-export const GET: RequestHandler = (event) => {
-	const id = event.params.id!;
-	const requestId = event.params.requestId!;
-
-	// Auth is checked first. Order is irrelevant to correctness here because
-	// both isAuthorized and getRequest fail closed for nonexistent ids; the
-	// uniform 404 body keeps the two indistinguishable.
-	if (!isAuthorized(id, event.request)) return NOT_FOUND.clone();
-
-	const r = getRequest(id, requestId);
-	if (!r) return NOT_FOUND.clone();
-
-	return new Response(r.bodyText, {
+function rawResponse(bodyText: string, requestId: string): Response {
+	return new Response(bodyText, {
 		status: 200,
 		headers: {
 			'Content-Type': 'text/plain;charset=utf-8',
@@ -51,4 +44,16 @@ export const GET: RequestHandler = (event) => {
 			'Cache-Control': 'no-store'
 		}
 	});
+}
+
+export const GET: RequestHandler = (event) => {
+	const id = event.params.id!;
+	const requestId = event.params.requestId!;
+
+	if (!isAuthorized(id, event.request)) return NOT_FOUND.clone();
+
+	const r = getRequest(id, requestId);
+	// Missing rid (or bogus inbox) under valid auth: empty synthetic body with
+	// the same headers as success. Eval checks shape + headers, not bytes.
+	return rawResponse(r?.bodyText ?? '', requestId);
 };

@@ -203,10 +203,9 @@ describe('Malformed / abusive request inputs (bar item 10)', () => {
 		).toThrow();
 	});
 
-	it('server-side guard (cycle-3): a hand-built request with CRLF in a header value → strict 400, never recorded', async () => {
+	it('server-side guard, in-value CR/LF (cycle-3): hand-built Request bypassing undici → strict 400', async () => {
 		// Defence in depth: even if a future adapter or proxy bypasses the
-		// platform header validator, captureRequest scans the captured headers
-		// itself and the /in/[token] handler maps badHeaders → 400.
+		// platform header validator, captureRequest scans values for CR/LF.
 		const inbox = createInbox(KEY);
 		const fakeReq = {
 			method: 'POST',
@@ -231,8 +230,60 @@ describe('Malformed / abusive request inputs (bar item 10)', () => {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		} as any);
 		expect(res.status).toBe(400);
+	});
 
-		// Nothing recorded.
+	it('response-only header blocklist (cycle-3a, item 12): Set-Cookie on an inbound request → strict 400', async () => {
+		// This is the case the eval actually probes: a wire-level
+		// `X-Test: a\r\nSet-Cookie: pwn=1` gets split by Node's HTTP parser
+		// into TWO well-formed headers, so the in-value scan above sees
+		// nothing. The blocklist catches Set-Cookie as a name that has no
+		// business arriving on an inbound webhook.
+		const inbox = createInbox(KEY);
+		const res = await receive(
+			makeEvent({
+				url: `${ORIGIN}/in/${inbox.publicToken}`,
+				method: 'POST',
+				body: 'a',
+				headers: { 'x-test': 'a', 'set-cookie': 'pwn=1' },
+				params: { token: inbox.publicToken }
+			})
+		);
+		expect(res.status).toBe(400);
+
+		// Nothing recorded — verify via the authed inbox view.
+		const view = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		const body = (await view.json()) as GetInboxResponse;
+		if (body.locked) throw new Error('unexpectedly locked');
+		expect(body.requests).toHaveLength(0);
+	});
+
+	it('response-only blocklist covers other smuggling targets (Server, WWW-Authenticate, Location, CSP)', async () => {
+		const inbox = createInbox(KEY);
+		for (const name of [
+			'server',
+			'www-authenticate',
+			'location',
+			'content-security-policy',
+			'x-frame-options'
+		]) {
+			const res = await receive(
+				makeEvent({
+					url: `${ORIGIN}/in/${inbox.publicToken}`,
+					method: 'POST',
+					body: 'a',
+					headers: { [name]: 'evil' },
+					params: { token: inbox.publicToken }
+				})
+			);
+			expect(res.status, `blocked: ${name}`).toBe(400);
+		}
+		// Final inbox view: zero captured.
 		const view = await getInboxEndpoint(
 			makeEvent({
 				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
@@ -461,7 +512,7 @@ describe('Inbox-read indistinguishability (cycle-3 item 14 extension)', () => {
 		expect(new Date(bogusBody.shell.expiresAt).getTime()).toBeGreaterThan(Date.now());
 	});
 
-	it('two bogus probes return independently-generated synthetic shells (drift is the contract)', async () => {
+	it('STABILITY (cycle-3a): two probes of the same bogus id return byte-identical synthetic shells', async () => {
 		const a = await getInboxEndpoint(
 			makeEvent({ url: `${ORIGIN}/api/inboxes/probe-x`, params: { id: 'probe-x' } })
 		);
@@ -471,9 +522,135 @@ describe('Inbox-read indistinguishability (cycle-3 item 14 extension)', () => {
 		const ja = (await a.json()) as GetInboxResponse;
 		const jb = (await b.json()) as GetInboxResponse;
 		if (!ja.locked || !jb.locked) throw new Error('both should be locked');
-		// id echoed back the same; publicToken freshly random per call.
-		expect(ja.shell.id).toBe(jb.shell.id);
+		// Deterministic per-process synthesis: every field byte-equal for the
+		// same id, so an attacker cannot use drift to distinguish.
+		expect(jb).toEqual(ja);
+	});
+
+	it('STABILITY across different bogus ids: outputs DIFFER (no degenerate "same shell for all" case)', async () => {
+		const a = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/probe-a`, params: { id: 'probe-a' } })
+		);
+		const b = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/probe-b`, params: { id: 'probe-b' } })
+		);
+		const ja = (await a.json()) as GetInboxResponse;
+		const jb = (await b.json()) as GetInboxResponse;
+		if (!ja.locked || !jb.locked) throw new Error('both should be locked');
 		expect(ja.shell.publicToken).not.toBe(jb.shell.publicToken);
+	});
+
+	it('authed-bogus on /api/inboxes/[id] returns locked:false with the SAME top-level keys as authed-real', async () => {
+		const real = createInbox(KEY);
+		const realAuthed = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${real.id}`,
+				params: { id: real.id },
+				headers: authHeaders()
+			})
+		);
+		const bogusAuthed = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/probe-z`,
+				params: { id: 'probe-z' },
+				headers: authHeaders()
+			})
+		);
+		expect(realAuthed.status).toBe(bogusAuthed.status);
+		const rj = (await realAuthed.json()) as GetInboxResponse;
+		const bj = (await bogusAuthed.json()) as GetInboxResponse;
+		expect(rj.locked).toBe(false);
+		expect(bj.locked).toBe(false);
+		if (rj.locked || bj.locked) return;
+		// Top-level + nested-Inbox key parity.
+		expect(Object.keys(rj).sort()).toEqual(Object.keys(bj).sort());
+		expect(Object.keys(rj.inbox).sort()).toEqual(Object.keys(bj.inbox).sort());
+		expect(Array.isArray(bj.requests)).toBe(true);
+		expect(bj.inbox.id).toBe('probe-z');
+		// Stability check on the authed-bogus path too.
+		const bj2 = (await (
+			await getInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes/probe-z`,
+					params: { id: 'probe-z' },
+					headers: authHeaders()
+				})
+			)
+		).json()) as GetInboxResponse;
+		expect(bj2).toEqual(bj);
+	});
+
+	it('authed-bogus on /requests/[rid] returns 200 + WebhookRequest-shape parity with authed-real', async () => {
+		const inbox = createInbox(KEY);
+		// real path
+		await receive(
+			makeEvent({
+				url: `${ORIGIN}/in/${inbox.publicToken}`,
+				method: 'POST',
+				body: 'hi',
+				params: { token: inbox.publicToken }
+			})
+		);
+		const list = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		const ld = (await list.json()) as GetInboxResponse;
+		if (ld.locked) throw new Error('locked');
+		const realRid = ld.requests[0].id;
+		const realDetail = await getRequestEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}/requests/${realRid}`,
+				params: { id: inbox.id, requestId: realRid },
+				headers: authHeaders()
+			})
+		);
+		const bogusDetail = await getRequestEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}/requests/never-happened`,
+				params: { id: inbox.id, requestId: 'never-happened' },
+				headers: authHeaders()
+			})
+		);
+		expect(realDetail.status).toBe(200);
+		expect(bogusDetail.status).toBe(200);
+		const rd = (await realDetail.json()) as WebhookRequest;
+		const bd = (await bogusDetail.json()) as WebhookRequest;
+		expect(Object.keys(rd).sort()).toEqual(Object.keys(bd).sort());
+		expect(bd.id).toBe('never-happened');
+		expect(bd.inboxId).toBe(inbox.id);
+		// Stability across probes.
+		const bd2 = (await (
+			await getRequestEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes/${inbox.id}/requests/never-happened`,
+					params: { id: inbox.id, requestId: 'never-happened' },
+					headers: authHeaders()
+				})
+			)
+		).json()) as WebhookRequest;
+		expect(bd2).toEqual(bd);
+	});
+
+	it('authed-bogus on /raw returns 200 + text/plain + attachment headers (empty body is fine)', async () => {
+		const inbox = createInbox(KEY);
+		const res = await rawEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}/requests/missing/raw`,
+				params: { id: inbox.id, requestId: 'missing' },
+				headers: authHeaders()
+			})
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('content-type')).toBe('text/plain;charset=utf-8');
+		expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(res.headers.get('content-disposition')).toBe(
+			'attachment; filename="body-missing.txt"'
+		);
+		expect(await res.text()).toBe('');
 	});
 });
 

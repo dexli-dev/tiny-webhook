@@ -27,8 +27,10 @@ const handle: RequestHandler = async (event) => {
 			};
 			return json(body, { status: 413 });
 		}
-		// badHeaders: CRLF in a header value. Generic 400 — never record.
-		const body: ApiError = { error: 'Request headers contain invalid characters.' };
+		// badHeaders (CRLF in value) and headerInjection (response-only header
+		// name present) both collapse to a generic 400 — the response shape
+		// must not leak which guard tripped. Never record.
+		const body: ApiError = { error: 'Request contains an invalid header.' };
 		return json(body, { status: 400 });
 	}
 
