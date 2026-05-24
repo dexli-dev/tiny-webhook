@@ -295,7 +295,11 @@ describe('GET /api/inboxes/[id]/requests/[requestId]', () => {
 		// publicToken is a fresh random of the configured length; expiresAt is
 		// a fresh ISO timestamp. Caller can't distinguish from a real locked shell.
 		expect(body.shell.publicToken).toHaveLength(CONFIG.TOKEN_LENGTH);
-		expect(body.shell.requestCount).toBe(0);
+		// requestCount is seed-derived in [0, MAX_REQUESTS_PER_INBOX] — matches
+		// the value domain of real shells. The old always-0 was a leak (real
+		// inboxes with traffic showed count>0, bogus stayed at 0).
+		expect(body.shell.requestCount).toBeGreaterThanOrEqual(0);
+		expect(body.shell.requestCount).toBeLessThanOrEqual(CONFIG.MAX_REQUESTS_PER_INBOX);
 		expect(new Date(body.shell.expiresAt).getTime()).toBeGreaterThan(Date.now());
 	});
 });

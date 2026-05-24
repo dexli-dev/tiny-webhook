@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CONFIG } from '$lib/config';
-import { __resetForTests, createInbox } from '$lib/server/store';
+import { __resetForTests, createInbox, synthInbox } from '$lib/server/store';
 import type { GetInboxResponse, Inbox, WebhookRequest } from '$lib/types';
 
 import { POST as receive } from './in/[token]/+server';
@@ -508,7 +508,10 @@ describe('Inbox-read indistinguishability (cycle-3 item 14 extension)', () => {
 		expect(typeof bogusBody.shell.publicToken).toBe('string');
 		expect(bogusBody.shell.publicToken).toHaveLength(CONFIG.TOKEN_LENGTH);
 		expect(bogusBody.shell.id).toBe('totallybogusid');
-		expect(bogusBody.shell.requestCount).toBe(0);
+		// requestCount is seed-derived in [0, MAX_REQUESTS_PER_INBOX] for bogus,
+		// matches the value domain of real shells. The old always-0 was a leak.
+		expect(bogusBody.shell.requestCount).toBeGreaterThanOrEqual(0);
+		expect(bogusBody.shell.requestCount).toBeLessThanOrEqual(CONFIG.MAX_REQUESTS_PER_INBOX);
 		expect(new Date(bogusBody.shell.expiresAt).getTime()).toBeGreaterThan(Date.now());
 	});
 
@@ -541,18 +544,14 @@ describe('Inbox-read indistinguishability (cycle-3 item 14 extension)', () => {
 		expect(new Date(body.shell.expiresAt).getTime()).toBeGreaterThan(Date.now());
 	});
 
-	it('TIME-DOMAIN: authed-bogus synthetic Inbox has createdAt < now AND expiresAt > now AND expiresAt = createdAt + INBOX_TTL_MS', async () => {
-		const res = await getInboxEndpoint(
-			makeEvent({
-				url: `${ORIGIN}/api/inboxes/time-domain-probe-2`,
-				params: { id: 'time-domain-probe-2' },
-				headers: authHeaders()
-			})
-		);
-		const body = (await res.json()) as GetInboxResponse;
-		if (body.locked) throw new Error('should be unlocked synthetic');
-		const created = new Date(body.inbox.createdAt).getTime();
-		const expires = new Date(body.inbox.expiresAt).getTime();
+	it('TIME-DOMAIN: synthInbox helper exposes createdAt < now AND expiresAt > now AND expiresAt = createdAt + INBOX_TTL_MS', async () => {
+		// synthInbox is still used by synthRequest.path derivation. The
+		// authed-bogus /api/inboxes/[id] path now returns the locked shell, but
+		// the helper's time-domain invariants still need to hold for any code
+		// that calls synthInbox directly.
+		const inbox = synthInbox('time-domain-probe-2');
+		const created = new Date(inbox.createdAt).getTime();
+		const expires = new Date(inbox.expiresAt).getTime();
 		expect(created).toBeLessThan(Date.now());
 		expect(expires).toBeGreaterThan(Date.now());
 		expect(expires - created).toBe(CONFIG.INBOX_TTL_MS);
@@ -587,40 +586,48 @@ describe('Inbox-read indistinguishability (cycle-3 item 14 extension)', () => {
 		expect(ja.shell.publicToken).not.toBe(jb.shell.publicToken);
 	});
 
-	it('authed-bogus on /api/inboxes/[id] returns locked:false with the SAME top-level keys as authed-real', async () => {
+	it('authed-bogus on /api/inboxes/[id] returns the LOCKED shell — same shape as wrong-key-on-real (no wrong-key oracle)', async () => {
+		// Earlier cycle-3a returned UNLOCKED-synthetic for authed-bogus, which
+		// created an inverted oracle: presenting a wrong key on a bogus id
+		// produced an unlocked shape, while the same wrong key on a real id
+		// stayed locked — so wrong-key responses alone distinguished real vs
+		// bogus. Restoring "any non-owner state → locked shell" eliminates that
+		// path entirely. The remaining unlocked-vs-locked divergence is
+		// owner-with-correct-key vs everyone-else, which is structural.
 		const real = createInbox(KEY);
-		const realAuthed = await getInboxEndpoint(
+		const realWrongKey = await getInboxEndpoint(
 			makeEvent({
 				url: `${ORIGIN}/api/inboxes/${real.id}`,
 				params: { id: real.id },
-				headers: authHeaders()
+				headers: { authorization: 'Bearer wrongkey-doesnt-match' }
 			})
 		);
-		const bogusAuthed = await getInboxEndpoint(
+		const bogusWrongKey = await getInboxEndpoint(
 			makeEvent({
 				url: `${ORIGIN}/api/inboxes/probe-z`,
 				params: { id: 'probe-z' },
-				headers: authHeaders()
+				headers: { authorization: 'Bearer wrongkey-doesnt-match' }
 			})
 		);
-		expect(realAuthed.status).toBe(bogusAuthed.status);
-		const rj = (await realAuthed.json()) as GetInboxResponse;
-		const bj = (await bogusAuthed.json()) as GetInboxResponse;
-		expect(rj.locked).toBe(false);
-		expect(bj.locked).toBe(false);
-		if (rj.locked || bj.locked) return;
-		// Top-level + nested-Inbox key parity.
+		expect(realWrongKey.status).toBe(bogusWrongKey.status);
+		const rj = (await realWrongKey.json()) as GetInboxResponse;
+		const bj = (await bogusWrongKey.json()) as GetInboxResponse;
+		expect(rj.locked).toBe(true);
+		expect(bj.locked).toBe(true);
+		if (!rj.locked || !bj.locked) return;
+		// Top-level + nested-shell key parity, value-domain match.
 		expect(Object.keys(rj).sort()).toEqual(Object.keys(bj).sort());
-		expect(Object.keys(rj.inbox).sort()).toEqual(Object.keys(bj.inbox).sort());
-		expect(Array.isArray(bj.requests)).toBe(true);
-		expect(bj.inbox.id).toBe('probe-z');
-		// Stability check on the authed-bogus path too.
+		expect(Object.keys(rj.shell).sort()).toEqual(Object.keys(bj.shell).sort());
+		expect(bj.shell.publicToken).toHaveLength(CONFIG.TOKEN_LENGTH);
+		expect(bj.shell.requestCount).toBeGreaterThanOrEqual(0);
+		expect(bj.shell.requestCount).toBeLessThanOrEqual(CONFIG.MAX_REQUESTS_PER_INBOX);
+		// Stability across probes of the same bogus id under wrong-key auth.
 		const bj2 = (await (
 			await getInboxEndpoint(
 				makeEvent({
 					url: `${ORIGIN}/api/inboxes/probe-z`,
 					params: { id: 'probe-z' },
-					headers: authHeaders()
+					headers: { authorization: 'Bearer wrongkey-doesnt-match' }
 				})
 			)
 		).json()) as GetInboxResponse;
