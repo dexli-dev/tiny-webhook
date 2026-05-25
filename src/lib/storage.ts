@@ -14,6 +14,13 @@ export interface StoredInbox {
 	/** Base64url secret (no padding). Held in plaintext locally; never sent except as Bearer. */
 	key: string;
 	publicToken: string;
+	/**
+	 * Server-canonical webhook URL from CreateInboxResponse — uses PUBLIC_BASE_URL
+	 * when the operator set one. The UI displays this verbatim instead of
+	 * re-deriving from window.location.origin (cycle-4 bar 9). Older records
+	 * may not have this field; callers should fall back to origin + publicToken.
+	 */
+	webhookUrl?: string;
 	/** ISO 8601 UTC — used for pruning + countdown. */
 	expiresAt: string;
 	/** ISO 8601 UTC — used to sort the active-inbox list newest-first. */

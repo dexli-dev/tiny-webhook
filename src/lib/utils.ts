@@ -119,12 +119,25 @@ const SKIP_REPLAY_HEADERS = new Set([
 ]);
 
 /**
- * Build a runnable curl command that replays the request against `origin`.
- * `origin` is the current page origin; req.path already includes /in/{token}.
+ * Extract the canonical origin from a webhook URL of shape
+ * `<origin>/in/<publicToken>` (with optional trailing slash). Used so the
+ * cURL-replay tab and the receive-endpoint reconstruction honor the
+ * operator's PUBLIC_BASE_URL setting instead of the browser's current origin.
  */
-export function buildCurl(req: WebhookRequest, origin: string): string {
+export function canonicalOriginFromWebhookUrl(webhookUrl: string): string {
+	return webhookUrl.replace(/\/in\/[^/?#]+\/?$/, '');
+}
+
+/**
+ * Build a runnable curl command that replays the request against
+ * `canonicalOrigin` — the operator-configured public origin, derived from the
+ * inbox's server-canonical webhookUrl via canonicalOriginFromWebhookUrl().
+ * req.path already includes /in/{token}, so the final URL is
+ * `${canonicalOrigin}${req.path}${queryString}`.
+ */
+export function buildCurl(req: WebhookRequest, canonicalOrigin: string): string {
 	const qs = req.queryString ? `?${req.queryString}` : '';
-	const url = `${origin}${req.path}${qs}`;
+	const url = `${canonicalOrigin}${req.path}${qs}`;
 	const lines: string[] = [`curl -X ${req.method.toUpperCase()} ${shellQuote(url)}`];
 
 	for (const [name, value] of req.headers) {

@@ -9,7 +9,7 @@
 		WebhookRequest,
 		InboxEvent
 	} from '$lib/types';
-	import { exampleCurl } from '$lib/utils';
+	import { canonicalOriginFromWebhookUrl, exampleCurl } from '$lib/utils';
 	import { getStoredInbox, hasSeenFirstWarning } from '$lib/storage';
 	import { openSseStream, type SseHandle } from '$lib/sse-stream';
 	import CopyButton from '$lib/components/CopyButton.svelte';
@@ -36,7 +36,13 @@
 	let freshIds = $state<Set<string>>(new Set());
 
 	let origin = $state('');
-	let webhookUrl = $derived(inbox ? `${origin}/in/${inbox.publicToken}` : '');
+	// Cycle-4a: webhookUrl now comes verbatim from the server response so
+	// PUBLIC_BASE_URL overrides flow through to the displayed URL, the Copy
+	// button, the empty-state example cURL, and the replay tab. The origin
+	// derivation below is only a defensive fallback if the response somehow
+	// lacks the field.
+	let webhookUrl = $state('');
+	let canonicalOrigin = $derived(webhookUrl ? canonicalOriginFromWebhookUrl(webhookUrl) : origin);
 
 	// Per-inbox key from localStorage. Only the browser that created the inbox
 	// holds it; without it the server returns the locked-shell view.
@@ -74,14 +80,19 @@
 				return;
 			}
 			if (!res.ok) throw new Error(`Failed to load inbox (${res.status})`);
-			const data = (await res.json()) as GetInboxResponse;
+			// Cycle-4a contract: both branches carry webhookUrl. The intersection
+			// type is a no-op once types.ts catches up and stays type-safe either way.
+			const data = (await res.json()) as GetInboxResponse & { webhookUrl?: string };
 			if (data.locked) {
 				lockedShell = data.shell;
+				webhookUrl =
+					data.webhookUrl ?? `${origin}/in/${data.shell.publicToken}`;
 				loadState = 'locked';
 				return;
 			}
 			inbox = data.inbox;
 			requests = sortDesc(data.requests);
+			webhookUrl = data.webhookUrl ?? `${origin}/in/${data.inbox.publicToken}`;
 			loadState = 'ok';
 			if (storedKey && !hasSeenFirstWarning()) showFirstWarning = true;
 			openStream();
@@ -245,7 +256,7 @@
 			</div>
 		</main>
 	{:else if loadState === 'locked' && lockedShell}
-		<LockedShell shell={lockedShell} {origin} />
+		<LockedShell shell={lockedShell} {webhookUrl} />
 	{:else if inbox}
 		<!-- URL bar -->
 		<section class="wrap urlbar">
@@ -316,7 +327,7 @@
 						request={selectedRequest}
 						loading={detailLoading}
 						error={detailError}
-						{origin}
+						origin={canonicalOrigin}
 						onclose={closeDetail}
 					/>
 				</section>

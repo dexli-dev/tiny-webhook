@@ -19,7 +19,11 @@
 		</header>
 		<ul class="grid">
 			{#each inboxes as ib (ib.id)}
-				{@const url = `${origin}/in/${ib.publicToken}`}
+				<!-- Cycle-4a: prefer the server-canonical URL captured at create
+				     time so PUBLIC_BASE_URL overrides flow through to the card.
+				     Older records (created pre-v4a) may lack it; fall back to
+				     origin derivation. -->
+				{@const url = ib.webhookUrl ?? `${origin}/in/${ib.publicToken}`}
 				<li>
 					<a class="card" href="/inbox/{ib.id}">
 						<div class="cardhead">

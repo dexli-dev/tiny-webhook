@@ -9,11 +9,13 @@
 
 	interface Props {
 		shell: InboxShell;
-		origin: string;
+		// Cycle-4a: comes verbatim from the server response (honors
+		// PUBLIC_BASE_URL). The shell still carries publicToken but we no
+		// longer use it for URL construction.
+		webhookUrl: string;
 	}
-	let { shell, origin }: Props = $props();
+	let { shell, webhookUrl }: Props = $props();
 
-	let webhookUrl = $derived(`${origin}/in/${shell.publicToken}`);
 	let countLabel = $derived(
 		`${shell.requestCount} ${shell.requestCount === 1 ? 'request' : 'requests'} received`
 	);
