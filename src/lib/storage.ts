@@ -6,8 +6,15 @@
 // storage, switching browser) is unrecoverable by design, which is the
 // point of the locked-shell flow.
 
-const STORAGE_KEY = 'tinywebhook.inboxes';
-const WARN_KEY = 'tinywebhook.warn-shown';
+const STORAGE_KEY = 'webhook.inboxes';
+const WARN_KEY = 'webhook.warn-shown';
+
+// Pre-cycle-5 keys carry production data — pre-rename inboxes have ≤24h TTL
+// but were created under `tinywebhook.*` and live users would otherwise be
+// orphaned mid-session. One-shot copy on first import, then clear the old
+// keys so the migration trace vanishes. Remove in cycle 6.
+const LEGACY_STORAGE_KEY = 'tinywebhook.inboxes';
+const LEGACY_WARN_KEY = 'tinywebhook.warn-shown';
 
 /** Persisted record for one inbox this browser created. */
 export interface StoredInbox {
@@ -130,6 +137,33 @@ export function markFirstWarningSeen(): void {
 		/* ignore */
 	}
 }
+
+/**
+ * Lift pre-cycle-5 inbox + warning entries into the new namespace exactly
+ * once. Skips if the new key already holds something so we never trample a
+ * fresh post-rename write. Tolerant of private-mode / quota errors — a
+ * failed migration just means the user keeps whatever they had under the old
+ * key for ≤24h then it ages out. Remove in cycle 6.
+ */
+function migrateLegacyStorageKeys(): void {
+	const w = safeWindow();
+	if (!w) return;
+	try {
+		const oldInboxes = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+		const oldWarn = window.localStorage.getItem(LEGACY_WARN_KEY);
+		if (oldInboxes && !window.localStorage.getItem(STORAGE_KEY)) {
+			window.localStorage.setItem(STORAGE_KEY, oldInboxes);
+		}
+		if (oldWarn && !window.localStorage.getItem(WARN_KEY)) {
+			window.localStorage.setItem(WARN_KEY, oldWarn);
+		}
+		if (oldInboxes !== null) window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+		if (oldWarn !== null) window.localStorage.removeItem(LEGACY_WARN_KEY);
+	} catch {
+		/* private mode / quota — degrade silently */
+	}
+}
+migrateLegacyStorageKeys();
 
 /**
  * Generate a fresh 256-bit per-inbox secret, base64url-encoded without padding.

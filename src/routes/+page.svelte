@@ -10,6 +10,11 @@
 	} from '$lib/storage';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import ActiveInboxes from '$lib/components/ActiveInboxes.svelte';
+	import Wordmark from '$lib/components/Wordmark.svelte';
+
+	/** Per-browser cap on concurrent active inboxes (bar item 6). Surfaced only
+	    at creation time so a fresh user with 0 inboxes never sees a number. */
+	const MAX_ACTIVE = 3;
 
 	let creating = $state(false);
 	let errorMsg = $state<string | null>(null);
@@ -17,12 +22,12 @@
 	let origin = $state('');
 	let pruneTimer: ReturnType<typeof setInterval> | undefined;
 
-	// Marketing example. During SSR `origin` is empty so we show a generic
-	// host placeholder; on hydrate it swaps to the URL the user can actually
-	// reach. No brand-baking, no env plumbing.
-	let sampleCurl = $derived(`curl -X POST ${origin || 'https://your-host'}/in/abc123 \\
+	// Marketing example. Static brand URL — does NOT derive from window.location
+	// so the demo reads the same on previews, mirrors, and forks as it does in
+	// prod. The /in/abc123 token is illustrative; real tokens are 26 chars.
+	const sampleCurl = `curl -X POST https://webhook.dexli.dev/in/abc123 \\
   -H 'Content-Type: application/json' \\
-  -d '{"event":"checkout.completed","amount":4200}'`);
+  -d '{"event":"checkout.completed","amount":4200}'`;
 
 	function refreshActive() {
 		activeInboxes = listActiveInboxes();
@@ -30,6 +35,13 @@
 
 	async function createInbox() {
 		if (creating) return;
+		// Cap check happens HERE, at click time — not by pre-disabling the
+		// Create button. The 30-second-product-rule: a first-time visitor with
+		// zero inboxes must see no friction or cap-related copy.
+		if (activeInboxes.length >= MAX_ACTIVE) {
+			errorMsg = `You have ${MAX_ACTIVE} active inboxes. Delete one to create another.`;
+			return;
+		}
 		creating = true;
 		errorMsg = null;
 		try {
@@ -78,19 +90,16 @@
 </script>
 
 <svelte:head>
-	<title>TinyWebhook — Test webhooks in seconds</title>
+	<title>webhook — temporary webhook inbox · dexli.dev</title>
 </svelte:head>
 
 <div class="page">
 	<header class="topbar wrap">
-		<a class="brand" href="/">
-			<span class="logo" aria-hidden="true">⌁</span>
-			<span>tinywebhook<span class="tld">.site</span></span>
-		</a>
+		<Wordmark />
 		<span class="chip">no signup · 24h inboxes</span>
 	</header>
 
-	<ActiveInboxes inboxes={activeInboxes} {origin} />
+	<ActiveInboxes inboxes={activeInboxes} {origin} onDelete={refreshActive} onCreate={createInbox} {creating} />
 
 	<main class="hero wrap">
 		<div class="hero-copy">
@@ -160,7 +169,7 @@
 
 	<footer class="foot wrap">
 		<span>A tiny tool for inspecting HTTP callbacks.</span>
-		<span class="dim">{new Date().getFullYear()} · tinywebhook.site</span>
+		<span class="dim">2026 · webhook · dexli.dev</span>
 	</footer>
 </div>
 
@@ -177,32 +186,6 @@
 		justify-content: space-between;
 		padding-top: 22px;
 		padding-bottom: 22px;
-	}
-	.brand {
-		display: inline-flex;
-		align-items: center;
-		gap: 10px;
-		color: var(--text);
-		font-weight: 700;
-		font-size: 15px;
-		letter-spacing: -0.01em;
-	}
-	.brand:hover {
-		text-decoration: none;
-	}
-	.logo {
-		display: grid;
-		place-items: center;
-		width: 30px;
-		height: 30px;
-		border-radius: 8px;
-		background: var(--accent);
-		color: #0a0b0d;
-		font-size: 18px;
-		box-shadow: 0 0 24px -6px var(--accent-glow);
-	}
-	.tld {
-		color: var(--text-faint);
 	}
 
 	.hero {

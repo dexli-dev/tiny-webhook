@@ -1,4 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-	<rect width="32" height="32" rx="7" fill="#4f46e5" />
-	<path d="M9 16h6l2-5 3 10 2-5h2" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+	<rect width="32" height="32" rx="7" fill="#0a0b0d" />
+	<!-- Phosphor-lime lightning-fork glyph, the same character used in the
+	     in-app wordmark logo tile (⌁). Single-stroke geometry, no fills, so it
+	     stays crisp at 16px / OS-level tab-icon size. -->
+	<path
+		d="M17.5 6 9 18h6.2L13 26l9.2-13.5H16Z"
+		fill="#c6f135"
+		stroke="#c6f135"
+		stroke-width="1"
+		stroke-linejoin="round"
+	/>
 </svg>
