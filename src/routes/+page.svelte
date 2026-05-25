@@ -17,9 +17,12 @@
 	let origin = $state('');
 	let pruneTimer: ReturnType<typeof setInterval> | undefined;
 
-	const sampleCurl = `curl -X POST https://tinywebhook.site/in/abc123 \\
+	// Marketing example. During SSR `origin` is empty so we show a generic
+	// host placeholder; on hydrate it swaps to the URL the user can actually
+	// reach. No brand-baking, no env plumbing.
+	let sampleCurl = $derived(`curl -X POST ${origin || 'https://your-host'}/in/abc123 \\
   -H 'Content-Type: application/json' \\
-  -d '{"event":"checkout.completed","amount":4200}'`;
+  -d '{"event":"checkout.completed","amount":4200}'`);
 
 	function refreshActive() {
 		activeInboxes = listActiveInboxes();
