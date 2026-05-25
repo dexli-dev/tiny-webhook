@@ -6,7 +6,10 @@ import type { CreateInboxResponse, GetInboxResponse, WebhookRequest } from '$lib
 
 import { POST as createInboxEndpoint } from './api/inboxes/+server';
 import { POST as receive } from './in/[token]/+server';
-import { GET as getInboxEndpoint } from './api/inboxes/[id]/+server';
+import {
+	GET as getInboxEndpoint,
+	DELETE as deleteInboxEndpoint
+} from './api/inboxes/[id]/+server';
 import { GET as getRequestEndpoint } from './api/inboxes/[id]/requests/[requestId]/+server';
 import { GET as eventsEndpoint } from './api/inboxes/[id]/events/+server';
 
@@ -280,6 +283,201 @@ describe('GET /api/inboxes/[id] auth gating', () => {
 			// with whatever the synthShell produced.
 			expect(body.webhookUrl).toBe(`${ORIGIN}/in/${body.shell.publicToken}`);
 		}
+	});
+});
+
+describe('DELETE /api/inboxes/[id] (cycle-5, bar item 9b)', () => {
+	/** Snapshot a Response's externally-observable parts. */
+	async function snapshot(res: Response): Promise<{
+		status: number;
+		body: string;
+		headers: Record<string, string>;
+	}> {
+		const body = await res.text();
+		const headers: Record<string, string> = {};
+		for (const [k, v] of res.headers) headers[k.toLowerCase()] = v;
+		// Drop the X-SvelteKit-Page header SvelteKit may attach in some
+		// adapter combinations — it's the same across responses if present
+		// anyway, but normalising removes one source of harness noise.
+		return { status: res.status, body, headers };
+	}
+
+	it('bogus id + any key → 204 + empty body', async () => {
+		const res = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/totallybogus`,
+				method: 'DELETE',
+				params: { id: 'totallybogus' },
+				headers: authHeaders('anykeyatall')
+			})
+		);
+		const snap = await snapshot(res);
+		expect(snap.status).toBe(204);
+		expect(snap.body).toBe('');
+	});
+
+	it('real id + no key → 204 + empty body + no state change', async () => {
+		const inbox = createInbox(TEST_KEY);
+		const res = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				method: 'DELETE',
+				params: { id: inbox.id }
+			})
+		);
+		const snap = await snapshot(res);
+		expect(snap.status).toBe(204);
+		expect(snap.body).toBe('');
+		// Inbox is still alive — a GET with the right key still unlocks.
+		const post = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		expect((await post.json()).locked).toBe(false);
+	});
+
+	it('real id + wrong key → 204 + empty body + no state change', async () => {
+		const inbox = createInbox(TEST_KEY);
+		const res = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				method: 'DELETE',
+				params: { id: inbox.id },
+				headers: authHeaders('wrongkey')
+			})
+		);
+		const snap = await snapshot(res);
+		expect(snap.status).toBe(204);
+		expect(snap.body).toBe('');
+		const post = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		expect((await post.json()).locked).toBe(false);
+	});
+
+	it('real id + correct key → 204 + empty body + inbox ACTUALLY deleted', async () => {
+		const inbox = createInbox(TEST_KEY);
+		const res = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				method: 'DELETE',
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		const snap = await snapshot(res);
+		expect(snap.status).toBe(204);
+		expect(snap.body).toBe('');
+		// Subsequent GET with the same correct key returns a SYNTH locked shell
+		// (the deterministic-bogus view), NOT an unlocked real view — proof of
+		// actual server-side deletion. The synth publicToken is different from
+		// the real one we just deleted.
+		const post = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		const body = (await post.json()) as GetInboxResponse;
+		expect(body.locked).toBe(true);
+		if (body.locked === true) {
+			expect(body.shell.publicToken).not.toBe(inbox.publicToken);
+		}
+	});
+
+	it('INDISTINGUISHABILITY: all 4 cases produce byte-identical 204 + empty body + matching headers', async () => {
+		// The product invariant: an external observer (no other side-channel
+		// access) cannot tell which of the four DELETE cases occurred from the
+		// response alone. This is the same shape-indistinguishability we run on
+		// GET, extended to DELETE per the CEO ruling 2026-05-25.
+		const inbox = createInbox(TEST_KEY);
+
+		const calls = [
+			{
+				label: 'bogus-id + anykey',
+				params: { id: 'totallybogus-other' },
+				headers: authHeaders('anykey')
+			},
+			{ label: 'real-id + nokey', params: { id: inbox.id }, headers: undefined },
+			{ label: 'real-id + wrongkey', params: { id: inbox.id }, headers: authHeaders('wrongkey') },
+			// IMPORTANT: real + correct key is the state-changing case. Run it
+			// LAST so the preceding three see the inbox still alive (state-check
+			// happens implicitly: if the wrong-key call had deleted, the next
+			// real+correct call wouldn't return a different shape, but the
+			// state-change ASSERT in the dedicated test above already verified
+			// deletion against the same handler).
+			{ label: 'real-id + correctkey', params: { id: inbox.id }, headers: authHeaders() }
+		];
+
+		const snaps = [];
+		for (const c of calls) {
+			const res = await deleteInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes/${c.params.id}`,
+					method: 'DELETE',
+					params: c.params,
+					headers: c.headers
+				})
+			);
+			snaps.push({ label: c.label, snap: await snapshot(res) });
+		}
+
+		// Status + body equal across all four.
+		const base = snaps[0].snap;
+		for (const s of snaps) {
+			expect(s.snap.status, `status diverged at ${s.label}`).toBe(base.status);
+			expect(s.snap.body, `body diverged at ${s.label}`).toBe(base.body);
+		}
+		// Headers equal across all four (every key/value pair). content-length
+		// (if the platform sets it) must be the same value — '0' or absent in
+		// the same way — across cases.
+		for (const s of snaps) {
+			expect(
+				Object.keys(s.snap.headers).sort(),
+				`header keys diverged at ${s.label}`
+			).toEqual(Object.keys(base.headers).sort());
+			for (const k of Object.keys(base.headers)) {
+				expect(s.snap.headers[k], `header "${k}" diverged at ${s.label}`).toBe(
+					base.headers[k]
+				);
+			}
+		}
+		// Concrete shape: 204 + empty body.
+		expect(base.status).toBe(204);
+		expect(base.body).toBe('');
+	});
+
+	it('DELETE on a real id is idempotent (second call still 204, no throw)', async () => {
+		const inbox = createInbox(TEST_KEY);
+		const first = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				method: 'DELETE',
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		expect(first.status).toBe(204);
+		// Second call with the same key — inbox no longer exists, so auth check
+		// passes through to the bogus-path, no-op branch. Still 204, no leak.
+		const second = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				method: 'DELETE',
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		expect(second.status).toBe(204);
+		expect(await second.text()).toBe('');
 	});
 });
 

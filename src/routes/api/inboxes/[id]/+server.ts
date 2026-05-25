@@ -23,7 +23,13 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getInbox, inboxShell, listRequests, synthShell } from '$lib/server/store';
+import {
+	deleteInbox,
+	getInbox,
+	inboxShell,
+	listRequests,
+	synthShell
+} from '$lib/server/store';
 import { isAuthorized } from '$lib/server/auth';
 import { CONFIG } from '$lib/config';
 import type { GetInboxResponse } from '$lib/types';
@@ -56,4 +62,35 @@ export const GET: RequestHandler = (event) => {
 		webhookUrl: `${origin}/in/${shell.publicToken}`
 	};
 	return json(res, { status: 200 });
+};
+
+// DELETE /api/inboxes/[id]
+//
+// Always 204 No Content with an empty body. Four cases, all observationally
+// identical from the client side — only the correct bearer key flips
+// server-side state:
+//
+//   - DELETE /api/inboxes/<bogus-id>  with any key      → 204 (no-op)
+//   - DELETE /api/inboxes/<real-id>   with no key       → 204 (no-op)
+//   - DELETE /api/inboxes/<real-id>   with wrong key    → 204 (no-op)
+//   - DELETE /api/inboxes/<real-id>   with correct key  → 204 (actually deletes)
+//
+// This is the same shape-indistinguishability discipline GET already follows,
+// extended to a state-changing verb (cycle-5, bar item 9b clarification from
+// CEO). Because deletion is mute — no resource state escapes to the client —
+// no-key vs wrong-key vs bogus-id all share a single exit path. An external
+// observer cannot use response headers, body, or timing branching in this
+// handler to distinguish the four cases; only repeated GETs against the same
+// id over time can ever reveal whether deletion occurred, and only the holder
+// of the correct key (who must already exist to do that) could observe it.
+export const DELETE: RequestHandler = (event) => {
+	const id = event.params.id!;
+	const inbox = getInbox(id);
+	if (inbox && isAuthorized(id, event.request)) {
+		deleteInbox(id);
+	}
+	// Single exit — identical Response construction for all four cases. Do not
+	// branch headers, status, or body on auth/existence here: the indistinguish-
+	// ability invariant lives on this line.
+	return new Response(null, { status: 204 });
 };

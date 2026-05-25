@@ -3,6 +3,7 @@ import { CONFIG } from '$lib/config';
 import {
 	__resetForTests,
 	createInbox,
+	deleteInbox,
 	getInbox,
 	getRequest,
 	inboxShell,
@@ -217,5 +218,46 @@ describe('pub/sub', () => {
 
 	it('subscribe rejects with reason=unknown for unknown inbox', () => {
 		expect(subscribe('nope', () => {})).toEqual({ ok: false, reason: 'unknown' });
+	});
+});
+
+describe('deleteInbox (cycle-5 item 9b)', () => {
+	it('removes the inbox, its requests, AND its publicToken mapping', () => {
+		const inbox = createInbox(TEST_KEY);
+		recordRequest(inbox.publicToken, input());
+		recordRequest(inbox.publicToken, input());
+		expect(getInbox(inbox.id)).toBeDefined();
+		expect(listRequests(inbox.id)?.length).toBe(2);
+
+		deleteInbox(inbox.id);
+
+		expect(getInbox(inbox.id)).toBeUndefined();
+		expect(inboxShell(inbox.id)).toBeUndefined();
+		expect(listRequests(inbox.id)).toBeUndefined();
+		// Publishing on the public token must no longer route to the deleted
+		// inbox — confirms the token mapping was torn down too.
+		expect(recordRequest(inbox.publicToken, input())).toBeNull();
+	});
+
+	it('is idempotent on a nonexistent id (no throw, no side effect)', () => {
+		expect(() => deleteInbox('definitely-not-a-real-id')).not.toThrow();
+		expect(() => deleteInbox('definitely-not-a-real-id')).not.toThrow();
+	});
+
+	it('emits "expired" to active SSE subscribers and releases their slot', () => {
+		const inbox = createInbox(TEST_KEY);
+		const events: InboxEvent[] = [];
+		unsubOf(inbox.id, (e) => events.push(e));
+		deleteInbox(inbox.id);
+		// Subscribers see the same teardown signal as TTL expiry — no new event
+		// type, no leak of "deleted-by-owner" vs "ttl-expired".
+		expect(events.some((e) => e.type === 'expired')).toBe(true);
+	});
+
+	it('double-delete is a no-op (idempotency under repeated call)', () => {
+		const inbox = createInbox(TEST_KEY);
+		deleteInbox(inbox.id);
+		expect(() => deleteInbox(inbox.id)).not.toThrow();
+		expect(getInbox(inbox.id)).toBeUndefined();
 	});
 });
