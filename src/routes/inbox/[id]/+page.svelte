@@ -19,6 +19,7 @@
 	import RequestDetail from '$lib/components/RequestDetail.svelte';
 	import LockedShell from '$lib/components/LockedShell.svelte';
 	import FirstCreateWarning from '$lib/components/FirstCreateWarning.svelte';
+	import Wordmark from '$lib/components/Wordmark.svelte';
 
 	let inboxId = $derived($page.params.id);
 
@@ -213,15 +214,12 @@
 </script>
 
 <svelte:head>
-	<title>Inbox · TinyWebhook</title>
+	<title>Inbox · webhook · dexli.dev</title>
 </svelte:head>
 
 <div class="page">
 	<header class="topbar wrap">
-		<a class="brand" href="/">
-			<span class="logo" aria-hidden="true">⌁</span>
-			<span>tinywebhook<span class="tld">.site</span></span>
-		</a>
+		<Wordmark />
 		{#if loadState === 'ok'}
 			<div class="head-right">
 				<Countdown expiresAt={inbox!.expiresAt} onExpire={() => (expiredFlag = true)} />
@@ -349,30 +347,6 @@
 		padding-top: 20px;
 		padding-bottom: 20px;
 		border-bottom: 1px solid var(--border-soft);
-	}
-	.brand {
-		display: inline-flex;
-		align-items: center;
-		gap: 10px;
-		color: var(--text);
-		font-weight: 700;
-		font-size: 15px;
-	}
-	.brand:hover {
-		text-decoration: none;
-	}
-	.logo {
-		display: grid;
-		place-items: center;
-		width: 30px;
-		height: 30px;
-		border-radius: 8px;
-		background: var(--accent);
-		color: #0a0b0d;
-		font-size: 18px;
-	}
-	.tld {
-		color: var(--text-faint);
 	}
 	.head-right {
 		display: flex;

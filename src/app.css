@@ -1,6 +1,7 @@
-/* TinyWebhook — phosphor-terminal design system.
+/* webhook · dexli.dev — phosphor-terminal design system.
    Dark, monospace-forward, single electric-lime accent. Built for developers
-   reading raw HTTP. Display: Bricolage Grotesque. Data/UI: JetBrains Mono. */
+   reading raw HTTP. Display: Bricolage Grotesque. Data/UI: JetBrains Mono.
+   Shared across the dexli.dev tiny-tools family. */
 
 /* Self-hosted under /static/fonts so the scaffold's strict CSP
    (style-src 'self' 'unsafe-inline') and threat model (no third-party
