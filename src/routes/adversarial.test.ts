@@ -13,7 +13,10 @@ import type { GetInboxResponse, Inbox, WebhookRequest } from '$lib/types';
 
 import { POST as receive } from './in/[token]/+server';
 import * as receiveModule from './in/[token]/+server';
-import { GET as getInboxEndpoint } from './api/inboxes/[id]/+server';
+import {
+	GET as getInboxEndpoint,
+	DELETE as deleteInboxEndpoint
+} from './api/inboxes/[id]/+server';
 import { GET as getRequestEndpoint } from './api/inboxes/[id]/requests/[requestId]/+server';
 import { GET as rawEndpoint } from './api/inboxes/[id]/requests/[requestId]/raw/+server';
 import { GET as eventsEndpoint } from './api/inboxes/[id]/events/+server';
@@ -728,5 +731,176 @@ describe('X-Forwarded-For end-to-end (cycle-3 item 23)', () => {
 		const stored = await postAndFetch(inbox, { body: 'ok' });
 		// postAndFetch uses the makeEvent default getClientAddress.
 		expect(stored.sourceIp).toBe('203.0.113.9');
+	});
+});
+
+// -----------------------------------------------------------------------------
+// Cycle-5 item 9a — cf-connecting-ip end-to-end. The exact probe from the
+// CTO brief: cf-connecting-ip 1.2.3.4 vs x-forwarded-for 9.9.9.9. Captured
+// sourceIp must be the cf-ip, not the xff. cf-connecting-ip wins because
+// we're behind Cloudflare in production (webhook.dexli.dev) and CF rewrites
+// it at the edge — XFF can be appended by any intermediate proxy.
+// -----------------------------------------------------------------------------
+
+describe('cf-connecting-ip end-to-end (cycle-5 item 9a)', () => {
+	it('captured sourceIp = cf-connecting-ip when present alone', async () => {
+		const inbox = createInbox(KEY);
+		const stored = await postAndFetch(inbox, {
+			headers: { 'cf-connecting-ip': '1.2.3.4' },
+			body: 'ok'
+		});
+		expect(stored.sourceIp).toBe('1.2.3.4');
+	});
+
+	it('CTO brief probe: cf-ip 1.2.3.4 + xff 9.9.9.9 → captured IP = 1.2.3.4', async () => {
+		const inbox = createInbox(KEY);
+		const stored = await postAndFetch(inbox, {
+			headers: {
+				'cf-connecting-ip': '1.2.3.4',
+				'x-forwarded-for': '9.9.9.9'
+			},
+			body: 'ok'
+		});
+		expect(stored.sourceIp).toBe('1.2.3.4');
+		expect(stored.sourceIp).not.toBe('9.9.9.9');
+	});
+
+	it('xff still works when cf-connecting-ip absent (regression guard)', async () => {
+		// Additive-on-the-left property. The cycle-3 item-23 XFF behavior is
+		// unchanged for non-CF deployments.
+		const inbox = createInbox(KEY);
+		const stored = await postAndFetch(inbox, {
+			headers: { 'x-forwarded-for': '198.51.100.7' },
+			body: 'ok'
+		});
+		expect(stored.sourceIp).toBe('198.51.100.7');
+	});
+});
+
+// -----------------------------------------------------------------------------
+// Cycle-5 item 9b — DELETE indistinguishability. Same shape-equivalence
+// discipline the GET endpoints carry, extended to a state-changing verb. An
+// external observer cannot distinguish the four DELETE cases (bogus, real-
+// nokey, real-wrongkey, real-rightkey) from the response alone.
+// -----------------------------------------------------------------------------
+
+describe('DELETE /api/inboxes/[id] indistinguishability (cycle-5 item 9b)', () => {
+	async function snapshot(res: Response): Promise<{
+		status: number;
+		body: string;
+		headers: Record<string, string>;
+	}> {
+		const body = await res.text();
+		const headers: Record<string, string> = {};
+		for (const [k, v] of res.headers) headers[k.toLowerCase()] = v;
+		return { status: res.status, body, headers };
+	}
+
+	it('all 4 DELETE cases produce byte-identical responses', async () => {
+		const inbox = createInbox(KEY);
+		const cases = [
+			{
+				label: 'bogus-id + anykey',
+				params: { id: randomToken(CONFIG.TOKEN_LENGTH) },
+				headers: authHeaders()
+			},
+			{
+				label: 'real-id + nokey',
+				params: { id: inbox.id },
+				headers: undefined as Record<string, string> | undefined
+			},
+			{
+				label: 'real-id + wrongkey',
+				params: { id: inbox.id },
+				headers: { authorization: 'Bearer wrongkey' }
+			},
+			// state-changing case last
+			{
+				label: 'real-id + correctkey',
+				params: { id: inbox.id },
+				headers: authHeaders()
+			}
+		];
+
+		const snaps: { label: string; snap: Awaited<ReturnType<typeof snapshot>> }[] = [];
+		for (const c of cases) {
+			const res = await deleteInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes/${c.params.id}`,
+					method: 'DELETE',
+					params: c.params,
+					headers: c.headers
+				})
+			);
+			snaps.push({ label: c.label, snap: await snapshot(res) });
+		}
+
+		const base = snaps[0].snap;
+		expect(base.status).toBe(204);
+		expect(base.body).toBe('');
+		for (const s of snaps) {
+			expect(s.snap.status, `status diverged at ${s.label}`).toBe(204);
+			expect(s.snap.body, `body diverged at ${s.label}`).toBe('');
+			expect(
+				Object.keys(s.snap.headers).sort(),
+				`header keys diverged at ${s.label}`
+			).toEqual(Object.keys(base.headers).sort());
+			for (const k of Object.keys(base.headers)) {
+				expect(s.snap.headers[k], `header "${k}" diverged at ${s.label}`).toBe(
+					base.headers[k]
+				);
+			}
+		}
+	});
+
+	it('STABILITY: repeated DELETE probes against the same bogus id are byte-identical', async () => {
+		// Defence against per-call response drift (random nonces, varying
+		// timestamps, etc.). The handler has none today, but make the invariant
+		// explicit so a future refactor cannot regress it silently.
+		const id = randomToken(CONFIG.TOKEN_LENGTH);
+		const first = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${id}`,
+				method: 'DELETE',
+				params: { id }
+			})
+		);
+		const second = await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${id}`,
+				method: 'DELETE',
+				params: { id }
+			})
+		);
+		const a = await snapshot(first);
+		const b = await snapshot(second);
+		expect(a).toEqual(b);
+	});
+
+	it('correct-key DELETE flips state: subsequent GET returns synth (not real) shell', async () => {
+		const inbox = createInbox(KEY);
+		await deleteInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				method: 'DELETE',
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		// Probe with the correct key — would unlock if the inbox still existed.
+		// After DELETE it doesn't, so the locked-bogus path returns a synth
+		// shell. The synth publicToken differs from the real one we just deleted.
+		const get = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		const body = (await get.json()) as GetInboxResponse;
+		expect(body.locked).toBe(true);
+		if (body.locked === true) {
+			expect(body.shell.publicToken).not.toBe(inbox.publicToken);
+		}
 	});
 });

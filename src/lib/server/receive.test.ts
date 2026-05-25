@@ -4,6 +4,70 @@ import { captureRequest, clientIp } from './receive';
 
 const addr = () => '203.0.113.1';
 
+describe('clientIp / cf-connecting-ip (cycle-5, bar item 9a)', () => {
+	it('cf-connecting-ip alone → used', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'cf-connecting-ip': '1.2.3.4' }
+		});
+		expect(clientIp(req, addr)).toBe('1.2.3.4');
+	});
+
+	it('cf-connecting-ip WINS over x-forwarded-for', () => {
+		// The exact probe from the cycle-5 brief: cf-ip 1.2.3.4 vs xff 9.9.9.9.
+		// CF is the trusted edge writing cf-connecting-ip; XFF can be appended
+		// by any intermediate proxy, including the same hop CF prepends to.
+		const req = new Request('http://x/in/t', {
+			headers: {
+				'cf-connecting-ip': '1.2.3.4',
+				'x-forwarded-for': '9.9.9.9'
+			}
+		});
+		expect(clientIp(req, addr)).toBe('1.2.3.4');
+	});
+
+	it('cf-connecting-ip WINS over xff AND getClientAddress', () => {
+		const req = new Request('http://x/in/t', {
+			headers: {
+				'cf-connecting-ip': '1.2.3.4',
+				'x-forwarded-for': '9.9.9.9, 10.0.0.1'
+			}
+		});
+		expect(clientIp(req, () => '203.0.113.1')).toBe('1.2.3.4');
+	});
+
+	it('cf-connecting-ip with surrounding whitespace is trimmed', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'cf-connecting-ip': '  1.2.3.4  ' }
+		});
+		expect(clientIp(req, addr)).toBe('1.2.3.4');
+	});
+
+	it('whitespace-only cf-connecting-ip → falls through to xff', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'cf-connecting-ip': '   ', 'x-forwarded-for': '5.6.7.8' }
+		});
+		expect(clientIp(req, addr)).toBe('5.6.7.8');
+	});
+
+	it('whitespace-only cf-connecting-ip AND no xff → falls through to getClientAddress', () => {
+		const req = new Request('http://x/in/t', {
+			headers: { 'cf-connecting-ip': '   ' }
+		});
+		expect(clientIp(req, addr)).toBe('203.0.113.1');
+	});
+
+	it('cf-connecting-ip header IS regression-safe: absent header → identical XFF behavior', () => {
+		// Sanity guard that cycle-5 is additive on the left of XFF, not a
+		// replacement. The CTO directive: "the fallback chain is additive on
+		// the LEFT of XFF, not a replacement." This duplicates an XFF test
+		// here to make the invariant visible inline.
+		const req = new Request('http://x/in/t', {
+			headers: { 'x-forwarded-for': '1.2.3.4, 5.6.7.8, 10.0.0.1' }
+		});
+		expect(clientIp(req, addr)).toBe('1.2.3.4');
+	});
+});
+
 describe('clientIp / X-Forwarded-For (bar item 23)', () => {
 	it('no XFF header → falls back to getClientAddress', () => {
 		const req = new Request('http://x/in/t');

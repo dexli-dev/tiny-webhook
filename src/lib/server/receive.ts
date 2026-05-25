@@ -53,10 +53,34 @@ const RESPONSE_ONLY_HEADERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Best-effort source IP: first hop of x-forwarded-for, else the transport peer.
- * The first XFF entry is the closest-to-client address a proxy appended.
+ * Best-effort source IP. Fallback chain (cycle-5, bar item 9a):
+ *
+ *   1. `cf-connecting-ip` — Cloudflare-injected single-value true client IP.
+ *      We're behind Cloudflare in production (webhook.dexli.dev), and CF
+ *      strips/overrides any client-supplied `cf-connecting-ip`, so when this
+ *      header is present we trust it as the closest-to-client address. It
+ *      wins over XFF because XFF can be appended-to by any intermediate proxy
+ *      but only CF writes `cf-connecting-ip` at the edge.
+ *
+ *   2. Leftmost `x-forwarded-for` hop — for non-CF deployments and legacy
+ *      reverse-proxy chains. The first XFF entry is the closest-to-client
+ *      address a proxy appended.
+ *
+ *   3. `getClientAddress()` — the transport peer (i.e. whatever the platform
+ *      adapter knows about the socket).
+ *
+ *   4. Literal `"unknown"` — when the adapter has no peer info (unit tests).
+ *
+ * Empty/whitespace values are skipped at each step, falling through to the
+ * next. Adding cf-connecting-ip is ADDITIVE: pre-existing XFF behavior is
+ * unchanged when cf-connecting-ip is absent.
  */
 export function clientIp(request: Request, getClientAddress: () => string): string {
+	const cfIp = request.headers.get('cf-connecting-ip');
+	if (cfIp) {
+		const trimmed = cfIp.trim();
+		if (trimmed) return trimmed;
+	}
 	const xff = request.headers.get('x-forwarded-for');
 	if (xff) {
 		const first = xff.split(',')[0]?.trim();
