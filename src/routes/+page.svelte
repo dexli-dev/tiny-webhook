@@ -54,6 +54,7 @@
 			saveStoredInbox(data.inboxId, {
 				key,
 				publicToken: data.publicToken,
+				webhookUrl: data.webhookUrl,
 				expiresAt: data.expiresAt,
 				createdAt: new Date().toISOString()
 			});
