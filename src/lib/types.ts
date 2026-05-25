@@ -99,11 +99,18 @@ export interface RequestSummary {
  * `locked: false` is returned only to a caller who presented the correct
  * Bearer key (Authorization header). `locked: true` is returned for any inbox
  * that exists without a valid key — different browser, cleared storage, etc.
- * Truly nonexistent inbox ids respond 404.
+ * Bogus inbox ids return a synthetic shell (see indistinguishability spec).
+ *
+ * `webhookUrl` is present on BOTH branches and is the canonical public URL
+ * for sending requests TO this inbox. The server computes it from
+ * CONFIG.PUBLIC_BASE_URL when set, otherwise from the incoming request's
+ * origin. UIs SHOULD display this exact string rather than re-deriving from
+ * `window.location.origin` — the operator may have configured a different
+ * public origin (e.g. a vanity hostname in front of an internal-port host).
  */
 export type GetInboxResponse =
-	| { locked: false; inbox: Inbox; requests: RequestSummary[] }
-	| { locked: true; shell: InboxShell };
+	| { locked: false; inbox: Inbox; requests: RequestSummary[]; webhookUrl: string }
+	| { locked: true; shell: InboxShell; webhookUrl: string };
 
 /** GET /api/inboxes/{id}/requests/{requestId} — full WebhookRequest. Bearer-key gated. */
 export type GetRequestResponse = WebhookRequest;

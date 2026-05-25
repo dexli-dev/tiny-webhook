@@ -237,6 +237,50 @@ describe('GET /api/inboxes/[id] auth gating', () => {
 		);
 		expect((await res.json()).locked).toBe(false);
 	});
+
+	it('webhookUrl present on the unlocked branch (cycle-4a bar 9)', async () => {
+		const inbox = createInbox(TEST_KEY);
+		const res = await getInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes/${inbox.id}`,
+				params: { id: inbox.id },
+				headers: authHeaders()
+			})
+		);
+		const body = (await res.json()) as GetInboxResponse;
+		expect(body.locked).toBe(false);
+		if (body.locked === false) {
+			// PUBLIC_BASE_URL is unset in the test process → falls back to
+			// request origin (= ORIGIN). End-to-end env override is verified by
+			// the Docker smoke gate.
+			expect(body.webhookUrl).toBe(`${ORIGIN}/in/${inbox.publicToken}`);
+		}
+	});
+
+	it('webhookUrl present on the locked branch and matches the shell publicToken', async () => {
+		const inbox = createInbox(TEST_KEY);
+		const res = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/${inbox.id}`, params: { id: inbox.id } })
+		);
+		const body = (await res.json()) as GetInboxResponse;
+		expect(body.locked).toBe(true);
+		if (body.locked === true) {
+			expect(body.webhookUrl).toBe(`${ORIGIN}/in/${body.shell.publicToken}`);
+		}
+	});
+
+	it('webhookUrl present on the locked-bogus branch (synthetic shell publicToken)', async () => {
+		const res = await getInboxEndpoint(
+			makeEvent({ url: `${ORIGIN}/api/inboxes/totallybogus`, params: { id: 'totallybogus' } })
+		);
+		const body = (await res.json()) as GetInboxResponse;
+		expect(body.locked).toBe(true);
+		if (body.locked === true) {
+			// Synth publicToken is deterministic per process; webhookUrl pairs
+			// with whatever the synthShell produced.
+			expect(body.webhookUrl).toBe(`${ORIGIN}/in/${body.shell.publicToken}`);
+		}
+	});
 });
 
 describe('GET /api/inboxes/[id]/requests/[requestId]', () => {

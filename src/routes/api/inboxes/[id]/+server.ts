@@ -25,19 +25,35 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getInbox, inboxShell, listRequests, synthShell } from '$lib/server/store';
 import { isAuthorized } from '$lib/server/auth';
+import { CONFIG } from '$lib/config';
 import type { GetInboxResponse } from '$lib/types';
 
 export const GET: RequestHandler = (event) => {
 	const id = event.params.id!;
 	const inbox = getInbox(id);
+	// PUBLIC_BASE_URL wins over request origin so the UI displays the operator's
+	// canonical hostname instead of re-deriving from window.location.origin
+	// (cycle-4a, bar 9). Identical logic to POST /api/inboxes — both responses
+	// must agree on what URL the operator has chosen to publish.
+	const origin = CONFIG.PUBLIC_BASE_URL ?? event.url.origin;
+
 	if (inbox && isAuthorized(id, event.request)) {
 		const requests = listRequests(id) ?? [];
-		const res: GetInboxResponse = { locked: false, inbox, requests };
+		const res: GetInboxResponse = {
+			locked: false,
+			inbox,
+			requests,
+			webhookUrl: `${origin}/in/${inbox.publicToken}`
+		};
 		return json(res, { status: 200 });
 	}
 	// inboxShell can return undefined if the inbox expired between the getInbox
 	// call and here — fall through to synthShell to keep the response uniform.
 	const shell = (inbox ? inboxShell(id) : undefined) ?? synthShell(id);
-	const res: GetInboxResponse = { locked: true, shell };
+	const res: GetInboxResponse = {
+		locked: true,
+		shell,
+		webhookUrl: `${origin}/in/${shell.publicToken}`
+	};
 	return json(res, { status: 200 });
 };
