@@ -10,6 +10,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createInbox, tryConsumeInboxCreation } from '$lib/server/store';
 import { clientIp } from '$lib/server/receive';
+import { CONFIG } from '$lib/config';
 import type { ApiError, CreateInboxRequest, CreateInboxResponse } from '$lib/types';
 
 /** Defensible bounds on the supplied key string. 256-bit base64url is 43 chars. */
@@ -47,11 +48,15 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	const inbox = createInbox(key);
+	// PUBLIC_BASE_URL wins when set (canonical origin even behind weird proxy
+	// hops); otherwise fall back to the request origin so local dev / single-
+	// host deploys just work without any config.
+	const origin = CONFIG.PUBLIC_BASE_URL ?? event.url.origin;
 	const res: CreateInboxResponse = {
 		inboxId: inbox.id,
 		publicToken: inbox.publicToken,
-		webhookUrl: `${event.url.origin}/in/${inbox.publicToken}`,
-		dashboardUrl: `${event.url.origin}/inbox/${inbox.id}`,
+		webhookUrl: `${origin}/in/${inbox.publicToken}`,
+		dashboardUrl: `${origin}/inbox/${inbox.id}`,
 		expiresAt: inbox.expiresAt
 	};
 	return json(res, { status: 201 });

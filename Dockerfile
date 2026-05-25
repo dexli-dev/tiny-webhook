@@ -21,6 +21,15 @@ RUN npm prune --omit=dev
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
+# OCI image metadata. `source` will be filled in when the GitHub repo is
+# created; leave it as the canonical clone URL so registries can link back.
+LABEL org.opencontainers.image.title="TinyWebhook" \
+      org.opencontainers.image.description="Temporary webhook inbox — capture, inspect, replay HTTP requests in real time. Part of the dexli.dev tiny-tools family." \
+      org.opencontainers.image.source="https://github.com/Milkslayer/tiny-webhook" \
+      org.opencontainers.image.licenses="UNLICENSED"
+
+# Fallback defaults only — every value is overridable at run time via -e.
+# See README "Configuration" / .env.example for the full operator surface.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000
