@@ -12,6 +12,7 @@
 	import MethodBadge from './MethodBadge.svelte';
 	import StatusBadge from './StatusBadge.svelte';
 	import CopyButton from './CopyButton.svelte';
+	import SendToRegexButton from './SendToRegexButton.svelte';
 
 	type Tab = 'overview' | 'headers' | 'query' | 'body' | 'curl';
 
@@ -171,6 +172,7 @@
 								<button class:on={!bodyPretty} onclick={() => (bodyPretty = false)} type="button">Raw</button>
 							</div>
 						{/if}
+						<SendToRegexButton body={request.bodyText} contentType={request.contentType} />
 						<CopyButton text={request.bodyText} label="Copy body" />
 					</div>
 					<pre class="code block">{bodyView}</pre>

@@ -77,6 +77,47 @@ export function statusVar(status: number): string {
 	return '--s-2xx';
 }
 
+/**
+ * True when the captured request body is best understood as binary / non-text
+ * data and should NOT be shipped through a text-only channel (e.g. the
+ * cycle-3 URL handoff to regex.dexli.dev).
+ *
+ * Two signals trigger this:
+ *
+ *   1. Content-Type names a binary media family (`image/`, `audio/`, `video/`,
+ *      `application/octet-stream`, `application/pdf`, `application/zip`,
+ *      `application/x-protobuf`, `application/wasm`).
+ *   2. `bodyText` contains the U+FFFD REPLACEMENT CHARACTER — the server's
+ *      UTF-8 decoder uses this for bytes it couldn't decode, so its presence
+ *      means the on-the-wire payload had non-UTF-8 sequences and what we have
+ *      is already a lossy approximation.
+ *
+ * False for any text-shaped media type (`text/*`, `application/json`,
+ * `application/xml`, form-encoded, etc.) even when `bodyText` is long.
+ */
+export function looksLikeBinary(contentType: string | null, bodyText: string): boolean {
+	if (contentType) {
+		const ct = contentType.toLowerCase();
+		if (
+			ct.startsWith('image/') ||
+			ct.startsWith('audio/') ||
+			ct.startsWith('video/') ||
+			ct.startsWith('font/') ||
+			ct.includes('application/octet-stream') ||
+			ct.includes('application/pdf') ||
+			ct.includes('application/zip') ||
+			ct.includes('application/x-protobuf') ||
+			ct.includes('application/wasm') ||
+			ct.includes('application/x-tar') ||
+			ct.includes('application/gzip')
+		) {
+			return true;
+		}
+	}
+	if (bodyText.includes('�')) return true;
+	return false;
+}
+
 /** True when content-type or body looks like JSON. */
 export function looksLikeJson(contentType: string | null, body: string): boolean {
 	if (contentType && /json/i.test(contentType)) return true;
