@@ -7,8 +7,19 @@ WORKDIR /app
 
 # Install all deps (including dev) for the build. Using npm ci against the
 # committed package-lock keeps builds reproducible across machines.
+#
+# `--ignore-scripts` skips the cycle-3 postinstall hook
+# (scripts/init-vendored.mjs) at this stage for two reasons:
+# 1. scripts/ + .gitmodules aren't COPYed into the image yet.
+# 2. node:22-alpine doesn't ship `git`; even with the files present the
+#    postinstall's `git submodule update --init` would fail inside the
+#    image.
+# The submodule's actual files are pre-populated on the host via
+# `npm install` before `docker build` is invoked, and arrive in the image
+# through the next `COPY . .` step. No git operations needed at build
+# time.
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --ignore-scripts
 
 # Copy the rest and produce the adapter-node build output at /app/build.
 COPY . .
