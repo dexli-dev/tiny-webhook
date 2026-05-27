@@ -6,6 +6,16 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter(),
+		// SvelteKit's alias map generates both the TS path alias AND the Vite
+		// import-alias in one declaration. `@dexli/family` resolves to the
+		// index.ts of the dexli-family library, pinned as a git submodule at
+		// `vendored/dexli-family/` (see scripts/init-vendored.mjs + .gitmodules).
+		// Submodule SHA points at `cycle-2/submit-2` — submodule-pin-to-eval-
+		// approved-submission pattern carried over from dexli-family's
+		// internal cron/regex parser pins.
+		alias: {
+			'@dexli/family': './vendored/dexli-family/src/index.ts'
+		},
 		// This product exists to receive arbitrary cross-origin HTTP requests
 		// (webhooks from external services, form posts, text/plain, etc.). It
 		// has no auth/cookies/sessions, so SvelteKit's origin-based CSRF check

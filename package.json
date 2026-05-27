@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/init-vendored.mjs",
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
