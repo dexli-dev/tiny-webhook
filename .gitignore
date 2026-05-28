@@ -37,3 +37,4 @@ vite.config.ts.timestamp-*
 coverage/
 .nyc_output/
 *.lcov
+.worktrees/
