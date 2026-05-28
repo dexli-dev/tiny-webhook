@@ -1,25 +1,30 @@
 # Multi-stage build: tiny final image, full devDeps only during build.
 
 # ---- Stage 0: fetch dexli-family library at pinned SHA ------------------
-# We can't `git submodule update --init` inside the build because
-# `.dockerignore` excludes `.git/` (intentional — keeps the runtime image
-# slim) and node:22-alpine doesn't ship `git`. Instead, a tiny alpine
-# stage with curl fetches the tarball at a hardcoded SHA + makes the
-# files available for COPY --from in the build stage.
+# We can't `git submodule update --init` inside the main build stage
+# because `.dockerignore` excludes `.git/` (intentional — keeps the
+# runtime image slim) and node:22-alpine doesn't ship `git`. A tiny
+# alpine stage with `git` does the clone + checkout, and the build
+# stage COPYs the result in.
+#
+# Why git-clone instead of curl tarball: GitHub's archive tarball
+# endpoint (`github.com/<owner>/<repo>/archive/<sha>.tar.gz`) returns
+# 404 on this specific repo despite anonymous git-clone working fine
+# (verified 2026-05-28). git-clone is the working path for fetching
+# the snapshot in a Dockerfile without `.git/` in the parent context.
 #
 # The SHA is duplicated between this Dockerfile and .gitmodules /
 # git submodule pin. **CTO discipline: when bumping the submodule pin,
-# bump DEXLI_FAMILY_SHA in lockstep.** Drift causes either a build
-# failure (SHA doesn't exist on GitHub) or a behavioral divergence
-# between local-tested code and deployed code. Catch at code review.
+# bump DEXLI_FAMILY_SHA in lockstep.** Drift causes a build failure
+# (SHA doesn't exist) or behavioral divergence between local-tested
+# code and deployed code. Catch at code review.
 FROM alpine:3.20 AS submodules
 ARG DEXLI_FAMILY_SHA=b430f39c0ce95d762407a6ed18b61d4f6474a466
-RUN apk add --no-cache curl tar
-WORKDIR /tmp
-RUN curl -fL "https://github.com/Milkslayer/dexli-family/archive/${DEXLI_FAMILY_SHA}.tar.gz" \
-        -o dexli-family.tgz \
-    && tar xzf dexli-family.tgz \
-    && mv "dexli-family-${DEXLI_FAMILY_SHA}" /vendored-dexli-family
+RUN apk add --no-cache git
+RUN git clone https://github.com/Milkslayer/dexli-family.git /vendored-dexli-family \
+    && cd /vendored-dexli-family \
+    && git checkout ${DEXLI_FAMILY_SHA} \
+    && rm -rf .git
 
 # ---- Stage 1: build the app -----------------------------------------------
 FROM node:22-alpine AS build
