@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CONFIG } from '$lib/config';
 import { __resetForTests, createInbox, recordRequest } from '$lib/server/store';
 import type { CapturedInput } from '$lib/server/store';
 import type { CreateInboxResponse, GetInboxResponse, WebhookRequest } from '$lib/types';
+import * as cloudflare from '$lib/server/cloudflare';
 
 import { POST as createInboxEndpoint } from './api/inboxes/+server';
 import { POST as receive } from './in/[token]/+server';
@@ -171,6 +172,126 @@ describe('POST /api/inboxes', () => {
 			})
 		);
 		expect(ok.status).toBe(201);
+	});
+
+	describe('CF-edge guard scope + ordering (vector 5 option 1)', () => {
+		afterEach(() => vi.restoreAllMocks());
+
+		it('Content-Type guard fires BEFORE CF-edge guard (information-disclosure hygiene)', async () => {
+			// Lead's ordering ask: bad CT + missing CF-RAY should return 415,
+			// not 403. A 415 reveals nothing about CF-edge policy; a 403 does.
+			// Recon attackers probing with arbitrary CT should learn nothing
+			// about the security posture. Spy is set to "block" so if the CF
+			// guard fires at all, the response would be 403 — but we expect
+			// 415, proving CT guard ran first AND short-circuited before CF.
+			const spy = vi.spyOn(cloudflare, 'requireCloudflareEdge');
+			spy.mockReturnValue(
+				new Response(JSON.stringify({ error: 'cf-blocked' }), { status: 403 })
+			);
+			const res = await createInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes`,
+					method: 'POST',
+					ip: '5.5.5.1',
+					headers: { 'content-type': 'text/plain' },
+					body: JSON.stringify({ key: TEST_KEY })
+				})
+			);
+			expect(res.status).toBe(415);
+			expect(spy).not.toHaveBeenCalled();
+		});
+
+		it('CF-edge guard fires when Content-Type is valid (env-on simulation)', async () => {
+			const spy = vi.spyOn(cloudflare, 'requireCloudflareEdge');
+			spy.mockReturnValue(
+				new Response(JSON.stringify({ error: 'cf-blocked' }), {
+					status: 403,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			);
+			const res = await createInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes`,
+					method: 'POST',
+					ip: '5.5.5.2',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ key: TEST_KEY })
+				})
+			);
+			expect(res.status).toBe(403);
+			expect(spy).toHaveBeenCalledTimes(1);
+		});
+
+		it('CF-edge guard fires BEFORE rate-limit (same victim-quota invariant as vector 1)', async () => {
+			// Spy unconditionally blocks → if guard came after rate-limit,
+			// MAX+5 attempts from same IP would burn the budget and a
+			// legitimate (spy-restored) call would get 429. We assert quota
+			// intact post-attack.
+			const ip = '5.5.5.3';
+			const spy = vi.spyOn(cloudflare, 'requireCloudflareEdge');
+			spy.mockReturnValue(
+				new Response(JSON.stringify({ error: 'cf-blocked' }), {
+					status: 403,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			);
+			for (let i = 0; i < CONFIG.MAX_INBOXES_PER_IP_PER_HOUR + 5; i++) {
+				const rejected = await createInboxEndpoint(
+					makeEvent({
+						url: `${ORIGIN}/api/inboxes`,
+						method: 'POST',
+						ip,
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ key: TEST_KEY })
+					})
+				);
+				expect(rejected.status).toBe(403);
+			}
+			spy.mockRestore();
+			const ok = await createInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes`,
+					method: 'POST',
+					ip,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ key: TEST_KEY })
+				})
+			);
+			expect(ok.status).toBe(201);
+		});
+
+		it('GET routes do NOT call CF-edge guard (scope-of-guard is two POST routes only)', async () => {
+			// Lead's flex (b): guard must not creep into reads/SSE. Spy on the
+			// helper and exercise representative GET surfaces. Spy must never
+			// be invoked.
+			const ip = '5.5.5.4';
+			const created = (await (
+				await createInboxEndpoint(
+					makeEvent({
+						url: `${ORIGIN}/api/inboxes`,
+						method: 'POST',
+						ip,
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ key: TEST_KEY })
+					})
+				)
+			).json()) as CreateInboxResponse;
+
+			const spy = vi.spyOn(cloudflare, 'requireCloudflareEdge');
+			spy.mockReturnValue(
+				new Response(JSON.stringify({ error: 'cf-blocked' }), { status: 403 })
+			);
+			const getRes = await getInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes/${created.inboxId}`,
+					method: 'GET',
+					params: { id: created.inboxId },
+					headers: authHeaders()
+				})
+			);
+			expect(getRes.status).toBe(200);
+			expect(spy).not.toHaveBeenCalled();
+		});
 	});
 
 	it('returns 429 once the per-IP creation limit is exceeded', async () => {

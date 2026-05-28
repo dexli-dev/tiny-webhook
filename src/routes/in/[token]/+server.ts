@@ -13,10 +13,19 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { recordRequest } from '$lib/server/store';
 import { captureRequest } from '$lib/server/receive';
+import { requireCloudflareEdge } from '$lib/server/cloudflare';
 import { CONFIG } from '$lib/config';
 import type { ApiError, ReceiveResponse } from '$lib/types';
 
 const handle: RequestHandler = async (event) => {
+	// CF-edge guard: when active, a direct-origin probe is rejected before
+	// any token resolution. Because the response is 403 (not 200) and fires
+	// regardless of token validity, the bar item 14 token-enumeration defense
+	// is preserved — an attacker who reaches origin direct learns "this
+	// server requires CF" but not "this token exists or not."
+	const blocked = requireCloudflareEdge(event.request);
+	if (blocked) return blocked;
+
 	const token = event.params.token!;
 
 	const result = await captureRequest(event.request, event.url, event.getClientAddress);

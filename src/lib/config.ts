@@ -54,6 +54,29 @@ export function envInt(
 }
 
 /**
+ * Parse a boolean env var. Accepts case-insensitive 'true'/'false'/'1'/'0'.
+ * Returns the default when unset or empty. Throws on any other value so
+ * misconfiguration is loud at startup.
+ *
+ * Exported for the same test reasons as envInt — caller passes a controlled
+ * env object instead of mutating process.env.
+ */
+export function envBool(
+	name: string,
+	defaultValue: boolean,
+	env: EnvSource = PROCESS_ENV
+): boolean {
+	const raw = env[name];
+	if (raw === undefined || raw === '') return defaultValue;
+	const lower = raw.trim().toLowerCase();
+	if (lower === 'true' || lower === '1') return true;
+	if (lower === 'false' || lower === '0') return false;
+	throw new Error(
+		`config: env ${name}=${JSON.stringify(raw)} must be 'true'|'false'|'1'|'0'`
+	);
+}
+
+/**
  * Parse a URL env var. Returns the canonical origin (scheme + host + port,
  * no trailing slash) or undefined if unset. Throws if set-but-unparseable or
  * if the operator pasted a URL with a path on it (origin-only is what
@@ -127,5 +150,39 @@ export const CONFIG = Object.freeze({
 	PUBLIC_BASE_URL: envUrl('PUBLIC_BASE_URL'),
 
 	/** HTTP methods accepted by the receive endpoint. Fixed. */
-	ACCEPTED_METHODS: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const
+	ACCEPTED_METHODS: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const,
+
+	/**
+	 * When true, IP-trusting routes (POST /api/inboxes, /in/[token] receive)
+	 * reject requests that lack a CF-RAY header with 403. This is a SOFT
+	 * mitigation for the CF-Connecting-IP trust chain: it raises the bar from
+	 * "discover origin IP and spoof CF-Connecting-IP" to "discover origin IP,
+	 * spoof CF-Connecting-IP, AND forge a CF-RAY header." A determined attacker
+	 * who knows about this guard simply adds the forgery; the structural close
+	 * is CF Authenticated Origin Pulls (mTLS at TLS layer), which lives
+	 * outside the app and is operator-routed.
+	 *
+	 * Default false so local dev / Vitest / docker-without-CF all work
+	 * unchanged. Production deploy sets true via Dokploy env panel.
+	 */
+	REQUIRE_CLOUDFLARE_HEADERS: envBool('REQUIRE_CLOUDFLARE_HEADERS', false)
 });
+
+// Boot-time observability: WARN when running in production without the
+// CF-edge guard enabled. "Forgot to set env in prod" is the most likely
+// failure mode for soft mitigations; logging at boot makes it loud at
+// deploy time rather than silent until the next audit.
+//
+// Side-effect at module load is intentional. Read from PROCESS_ENV
+// directly (not CONFIG) so this works whatever the prod-indicator shape.
+if (PROCESS_ENV.NODE_ENV === 'production' && !CONFIG.REQUIRE_CLOUDFLARE_HEADERS) {
+	// eslint-disable-next-line no-console
+	console.warn(
+		'[tinywebhook] WARN: REQUIRE_CLOUDFLARE_HEADERS is unset/false in a ' +
+			'production environment. The CF-edge guard is the soft layer of the ' +
+			'CF-Connecting-IP trust chain (vector 5 option 1); without it, an ' +
+			'attacker who discovers origin IP can spoof rate-limit attribution. ' +
+			'Set REQUIRE_CLOUDFLARE_HEADERS=true and verify via the post-deploy ' +
+			'curl probe documented in .env.example.'
+	);
+}

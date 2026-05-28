@@ -10,6 +10,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createInbox, tryConsumeInboxCreation } from '$lib/server/store';
 import { clientIp } from '$lib/server/receive';
+import { requireCloudflareEdge } from '$lib/server/cloudflare';
 import { CONFIG } from '$lib/config';
 import type { ApiError, CreateInboxRequest, CreateInboxResponse } from '$lib/types';
 
@@ -30,12 +31,24 @@ function isJsonContentType(header: string | null): boolean {
 }
 
 export const POST: RequestHandler = async (event) => {
+	// Guard order is deliberate (information-disclosure hygiene):
+	//   1. Content-Type guard (415) — public-shape rejection, doesn't reveal
+	//      security posture. Attacker probing with wrong CT learns nothing
+	//      about the CF-edge policy.
+	//   2. CF-edge guard (403) — only fires if the request shape was JSON,
+	//      so only an attacker specifically probing "correct CT + no CF-RAY"
+	//      learns the CF policy. Recon cost rises.
+	//   3. Per-IP rate-limit (429) — runs only after both guards pass, so
+	//      CSRF-shaped or direct-origin attempts cannot consume victim quota.
 	if (!isJsonContentType(event.request.headers.get('content-type'))) {
 		const body: ApiError = {
 			error: 'Content-Type must be application/json.'
 		};
 		return json(body, { status: 415 });
 	}
+
+	const blocked = requireCloudflareEdge(event.request);
+	if (blocked) return blocked;
 
 	const ip = clientIp(event.request, event.getClientAddress);
 	if (!tryConsumeInboxCreation(ip)) {
