@@ -89,8 +89,49 @@
 	onDestroy(() => clearInterval(pruneTimer));
 </script>
 
+<script lang="ts" module>
+	const SEO = {
+		title: 'webhook.dexli.dev — temporary HTTP inbox for testing webhooks',
+		description:
+			'Spin up a temporary URL, send HTTP requests, and inspect headers, body, query, and source IP in real time. No signup, 24-hour inboxes.',
+		url: 'https://webhook.dexli.dev/',
+		ogImage: 'https://webhook.dexli.dev/og-card.png'
+	};
+	const JSON_LD = {
+		'@context': 'https://schema.org',
+		'@type': 'WebApplication',
+		name: 'webhook.dexli.dev',
+		url: SEO.url,
+		description:
+			'Temporary HTTP inbox for testing webhooks. Captures incoming requests and surfaces headers, body, query parameters, and source IP for inspection.',
+		applicationCategory: 'DeveloperApplication',
+		operatingSystem: 'Any',
+		offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' }
+	};
+</script>
+
 <svelte:head>
-	<title>webhook — temporary webhook inbox · dexli.dev</title>
+	<title>{SEO.title}</title>
+	<meta name="description" content={SEO.description} />
+
+	<!-- Open Graph (X / HN / Discord / Slack unfurling) -->
+	<meta property="og:type" content="website" />
+	<meta property="og:site_name" content="dexli.dev" />
+	<meta property="og:url" content={SEO.url} />
+	<meta property="og:title" content={SEO.title} />
+	<meta property="og:description" content={SEO.description} />
+	<meta property="og:image" content={SEO.ogImage} />
+	<meta property="og:image:width" content="1200" />
+	<meta property="og:image:height" content="630" />
+
+	<!-- Twitter / X — mirrors OG, summary_large_image card -->
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content={SEO.title} />
+	<meta name="twitter:description" content={SEO.description} />
+	<meta name="twitter:image" content={SEO.ogImage} />
+
+	<!-- Schema.org structured data -->
+	{@html `<script type="application/ld+json">${JSON.stringify(JSON_LD)}</script>`}
 </svelte:head>
 
 <div class="page">
@@ -169,6 +210,14 @@
 
 	<footer class="foot wrap">
 		<span>A tiny tool for inspecting HTTP callbacks.</span>
+		<span class="family">
+			Part of the
+			<a href="https://dexli.dev">dexli.dev</a>
+			tiny-tools family —
+			<a href="https://cron.dexli.dev" rel="external">cron.dexli.dev</a>
+			·
+			<a href="https://regex.dexli.dev" rel="external">regex.dexli.dev</a>
+		</span>
 		<span class="dim">2026 · webhook · dexli.dev</span>
 	</footer>
 </div>
@@ -328,14 +377,29 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: 16px;
+		flex-wrap: wrap;
 		padding-top: 20px;
 		padding-bottom: 28px;
 		border-top: 1px solid var(--border-soft);
 		font-size: 12px;
 		color: var(--text-dim);
 	}
+	.foot .family {
+		color: var(--text-dim);
+	}
+	.foot .family a {
+		color: var(--accent);
+	}
 	.foot .dim {
 		color: var(--text-faint);
+	}
+	@media (max-width: 640px) {
+		.foot {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 6px;
+		}
 	}
 
 	.spinner {
