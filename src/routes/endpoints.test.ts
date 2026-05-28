@@ -99,6 +99,80 @@ describe('POST /api/inboxes', () => {
 		expect(res.status).toBe(400);
 	});
 
+	it('rejects non-application/json Content-Type with 415 (CSRF guard)', async () => {
+		// Cross-origin form-encoded / text-plain reaches the handler because the
+		// receiver path forces kit.csrf.checkOrigin=false globally. Per-route
+		// Content-Type guard closes the CSRF surface on this JSON-API endpoint.
+		for (const ct of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data']) {
+			const res = await createInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes`,
+					method: 'POST',
+					ip: '3.3.3.3',
+					headers: { 'content-type': ct },
+					body: JSON.stringify({ key: TEST_KEY })
+				})
+			);
+			expect(res.status).toBe(415);
+		}
+	});
+
+	it('rejects requests with no Content-Type header with 415', async () => {
+		const res = await createInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes`,
+				method: 'POST',
+				ip: '3.3.3.4',
+				body: JSON.stringify({ key: TEST_KEY })
+			})
+		);
+		expect(res.status).toBe(415);
+	});
+
+	it('accepts application/json with a charset parameter', async () => {
+		const res = await createInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes`,
+				method: 'POST',
+				ip: '3.3.3.5',
+				headers: { 'content-type': 'application/json; charset=utf-8' },
+				body: JSON.stringify({ key: TEST_KEY })
+			})
+		);
+		expect(res.status).toBe(201);
+	});
+
+	it('Content-Type guard fires before rate-limit (CSRF cannot exhaust victim quota)', async () => {
+		// CSRF runs in the victim's browser, so attacker-driven cross-origin
+		// POSTs would otherwise count against the victim's per-IP creation
+		// budget. Guard must reject the request before consuming a slot so the
+		// victim can still legitimately create inboxes.
+		const ip = '4.4.4.4';
+		for (let i = 0; i < CONFIG.MAX_INBOXES_PER_IP_PER_HOUR + 5; i++) {
+			const rejected = await createInboxEndpoint(
+				makeEvent({
+					url: `${ORIGIN}/api/inboxes`,
+					method: 'POST',
+					ip,
+					headers: { 'content-type': 'text/plain' },
+					body: JSON.stringify({ key: TEST_KEY })
+				})
+			);
+			expect(rejected.status).toBe(415);
+		}
+		// Legitimate JSON POST from same IP still succeeds — quota intact.
+		const ok = await createInboxEndpoint(
+			makeEvent({
+				url: `${ORIGIN}/api/inboxes`,
+				method: 'POST',
+				ip,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ key: TEST_KEY })
+			})
+		);
+		expect(ok.status).toBe(201);
+	});
+
 	it('returns 429 once the per-IP creation limit is exceeded', async () => {
 		const ip = '2.2.2.2';
 		const goodBody = {

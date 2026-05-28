@@ -17,7 +17,26 @@ import type { ApiError, CreateInboxRequest, CreateInboxResponse } from '$lib/typ
 const KEY_MIN_LEN = 16;
 const KEY_MAX_LEN = 512;
 
+// Per-route Content-Type guard. Receiver endpoint (POST /in/[token]) accepts
+// any Content-Type by design, which forces global kit.csrf.checkOrigin=false
+// (see [[feedback_sveltekit_csrf_webhooks]]). That global setting reopens
+// cross-origin form-encoded/text-plain POSTs to JSON-API endpoints. This
+// handler must therefore enforce its own narrow Content-Type contract so a
+// CSRF-style form submission from an attacker page cannot reach createInbox().
+function isJsonContentType(header: string | null): boolean {
+	if (header == null) return false;
+	const lower = header.toLowerCase().trim();
+	return lower === 'application/json' || lower.startsWith('application/json;');
+}
+
 export const POST: RequestHandler = async (event) => {
+	if (!isJsonContentType(event.request.headers.get('content-type'))) {
+		const body: ApiError = {
+			error: 'Content-Type must be application/json.'
+		};
+		return json(body, { status: 415 });
+	}
+
 	const ip = clientIp(event.request, event.getClientAddress);
 	if (!tryConsumeInboxCreation(ip)) {
 		const body: ApiError = {
