@@ -32,11 +32,15 @@ const config = {
 			mode: 'auto',
 			directives: {
 				'default-src': ['self'],
-				'script-src': ['self'],
+				// `https://analytics.innersyntax.dev` allowed for the Umami
+				// analytics snippet wired in app.html (M deployed Umami at
+				// that origin 2026-05-29). Same allowlist in connect-src so
+				// the script's POST-back telemetry isn't CSP-blocked.
+				'script-src': ['self', 'https://analytics.innersyntax.dev'],
 				'style-src': ['self', 'unsafe-inline'],
 				'img-src': ['self', 'data:'],
 				'font-src': ['self', 'data:'],
-				'connect-src': ['self'],
+				'connect-src': ['self', 'https://analytics.innersyntax.dev'],
 				'object-src': ['none'],
 				'frame-ancestors': ['none'],
 				'base-uri': ['none'],
