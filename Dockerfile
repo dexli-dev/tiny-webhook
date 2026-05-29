@@ -21,7 +21,7 @@
 FROM alpine:3.20 AS submodules
 ARG DEXLI_FAMILY_SHA=b430f39c0ce95d762407a6ed18b61d4f6474a466
 RUN apk add --no-cache git
-RUN git clone https://github.com/Milkslayer/dexli-family.git /vendored-dexli-family \
+RUN git clone https://github.com/dexli-dev/dexli-family.git /vendored-dexli-family \
     && cd /vendored-dexli-family \
     && git checkout ${DEXLI_FAMILY_SHA} \
     && rm -rf .git
@@ -56,7 +56,7 @@ WORKDIR /app
 
 LABEL org.opencontainers.image.title="TinyWebhook" \
       org.opencontainers.image.description="Temporary webhook inbox — capture, inspect, replay HTTP requests in real time. Part of the dexli.dev tiny-tools family." \
-      org.opencontainers.image.source="https://github.com/Milkslayer/tiny-webhook" \
+      org.opencontainers.image.source="https://github.com/dexli-dev/tiny-webhook" \
       org.opencontainers.image.licenses="UNLICENSED"
 
 ENV NODE_ENV=production \

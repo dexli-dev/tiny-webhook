@@ -9,7 +9,7 @@ Built with SvelteKit + adapter-node. No database, no external services — a sin
 ## Quick start
 
 ```bash
-git clone https://github.com/Milkslayer/tiny-webhook.git
+git clone https://github.com/dexli-dev/tiny-webhook.git
 cd tiny-webhook
 npm install
 npm run dev          # dev server with HMR → http://localhost:5173
