@@ -113,6 +113,7 @@
 <svelte:head>
 	<title>{SEO.title}</title>
 	<meta name="description" content={SEO.description} />
+	<link rel="canonical" href={SEO.url} />
 
 	<!-- Open Graph (X / HN / Discord / Slack unfurling) -->
 	<meta property="og:type" content="website" />
