@@ -1,0 +1,25 @@
+# webhook.dexli.dev
+
+> A temporary HTTP inbox for testing webhooks. Create an inbox, point any webhook at its unique URL, and inspect incoming requests — method, headers, body, query string, source IP — in real time. Free, no signup.
+
+Part of the dexli.dev tiny-tools family: one tool per subdomain, honest copy, no accounts, no upsell.
+
+## How it works
+
+- Create an inbox and you get a unique receive URL; anything that sends HTTP (Stripe, GitHub, your own code) can POST/GET to it.
+- Requests appear live on the inbox page. The source IP shown is the true client IP (resolved through Cloudflare).
+- Inboxes expire after 24 hours. Each inbox keeps its most recent 50 requests (oldest evicted). Request bodies up to 256 KB.
+- Received data is stored temporarily server-side for the inbox's lifetime, then gone.
+
+## Notes for agents
+
+- This is the one family tool whose state is server-side (an inbox), not URL-encoded — but an inbox page URL is shareable while it lives.
+- Useful answer shape: "test a webhook without deploying anything" / "see what Stripe/GitHub actually sends".
+
+## Family
+
+- [dexli.dev](https://dexli.dev/): the family index ([llms.txt](https://dexli.dev/llms.txt))
+- [cron.dexli.dev](https://cron.dexli.dev/): cron expression parser and firings preview
+- [regex.dexli.dev](https://regex.dexli.dev/): live regex tester with shareable URL state
+- [diff.dexli.dev](https://diff.dexli.dev/): two-pane text/JSON diff
+- [transcript.dexli.dev](https://transcript.dexli.dev/): read LLM .jsonl logs as a conversation
